@@ -32,17 +32,19 @@ class Env:
 
     def reset(self):
         for _ in range(self.window):
-            self.state_buffer.append(torch.zeros(84, 84, device=self.device))  # Initialiser les frames
+            self.state_buffer.append(torch.zeros(84, 84, device=self.device))
         obs = self.env.reset()
         obs = torch.tensor(obs, dtype=torch.float32, device=self.device).div_(255)
         self.state_buffer.append(obs)
-        return torch.stack(list(self.state_buffer), 0).permute(0, 2, 1)  # Permute pour avoir (4, 84, 84)
+        # Retourner avec la forme correcte (channels, height, width)
+        return torch.stack(list(self.state_buffer), 0)  # Shape: (4, 84, 84)
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
         obs = torch.tensor(obs, dtype=torch.float32, device=self.device).div_(255)
         self.state_buffer.append(obs)
-        return torch.stack(list(self.state_buffer), 0).permute(0, 2, 1), reward, done, info  # Permute pour avoir (4, 84, 84)
+        # Retourner avec la forme correcte (channels, height, width)
+        return torch.stack(list(self.state_buffer), 0), reward, done, info
 
 
 
@@ -103,45 +105,50 @@ from pathlib import Path
 class DQN(nn.Module):
     def __init__(self, action_space):
         super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)  # Input: (batch, 4, 84, 84)
+        # Couches de convolution
+        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-
-        # Calculer la taille de sortie dynamiquement
-        self.flatten_size = self._get_flatten_size()
-
-        self.fc1 = nn.Linear(self.flatten_size, 512)  # Corrigé pour la taille d'entrée
+        
+        # Calcul de la taille après aplatissement
+        self.flatten_size = 64 * 7 * 7  # 3136
+        
+        # Couches fully connected
+        self.fc1 = nn.Linear(self.flatten_size, 512)
         self.fc2 = nn.Linear(512, action_space)
 
-    def _get_flatten_size(self):
-        # Utilise une entrée fictive pour calculer la taille de sortie
-        with torch.no_grad():
-            x = torch.zeros(1, 4, 84, 84)  # Un batch fictif
-            x = F.relu(self.conv1(x))
-            x = F.relu(self.conv2(x))
-            x = F.relu(self.conv3(x))
-            return x.numel()  # Retourne le nombre total d'éléments dans la sortie
-
     def forward(self, x):
+        # Assurer que l'entrée a la bonne forme (batch_size, channels, height, width)
+        if len(x.shape) == 3:
+            x = x.unsqueeze(0)  # Ajouter dimension batch si absente
+            
         x = F.relu(self.conv1(x))
-        print("Shape after conv1:", x.shape)
-
         x = F.relu(self.conv2(x))
-        print("Shape after conv2:", x.shape)
-
         x = F.relu(self.conv3(x))
-        print("Shape after conv3:", x.shape)
-
-        # Aplatir la sortie
-        x = x.view(x.size(0), -1)  # Aplatir pour obtenir [batch_size, flatten_size]
-        print("Shape after flattening:", x.shape)
-
+        
+        x = x.reshape(x.size(0), -1)  # Aplatir en préservant la dimension batch
         x = F.relu(self.fc1(x))
-        return self.fc2(x)  # Prédit les Q-valeurs
+        x = self.fc2(x)
+        
+        return x
 
 
+    def get_conv_output_size(self, input_shape):
+        """
+        Fonction de debug pour vérifier les dimensions
+        """
+        x = torch.zeros(1, *input_shape)  # Crée un tensor de test
+        x = F.relu(self.conv1(x))
+        print(f"Après conv1: {x.shape}")
+        x = F.relu(self.conv2(x))
+        print(f"Après conv2: {x.shape}")
+        x = F.relu(self.conv3(x))
+        print(f"Après conv3: {x.shape}")
+        x = x.reshape(x.size(0), -1)
+        print(f"Après aplatissement: {x.shape}")
+        return x.shape[1]
 
-# Define the Agent class
+
 class Agent:
     def __init__(self, dqn, action_space, epsilon):
         self.dqn = dqn
@@ -153,15 +160,20 @@ class Agent:
             action = random.randint(0, self.action_space - 1)
         else:  # Exploitation
             with torch.no_grad():
-                action = self.dqn(state).argmax().item()
+                # Assurer que state a la bonne forme pour le réseau
+                if not isinstance(state, torch.Tensor):
+                    state = torch.FloatTensor(state).to(next(self.dqn.parameters()).device)
+                
+                # S'assurer que l'état a la bonne forme (batch, channels, height, width)
+                if len(state.shape) == 3:  # Si (channels, height, width)
+                    state = state.unsqueeze(0)  # Ajouter dimension batch
+                
+                q_values = self.dqn(state)
+                action = q_values.argmax(dim=1).item()
 
-        # Vérification des limites de l'action
-        action = max(0, min(action, self.action_space - 1))
         return action
 
 
-
-# Define the Replay Buffer
 class ReplayBuffer:
     def __init__(self, capacity):
         self.capacity = capacity
@@ -170,11 +182,12 @@ class ReplayBuffer:
 
     def add(self, experience):
         if len(self.buffer) < self.capacity:
-            self.buffer.append(None)  # Allocate space
+            self.buffer.append(None)
         self.buffer[self.position] = experience
         self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
+        batch_size = min(batch_size, len(self.buffer))  # Éviter de sampler plus que ce qu'on a
         return random.sample(self.buffer, batch_size)
 
     def size(self):
@@ -194,31 +207,53 @@ class DQNLearner:
 
     def update(self, batch_size):
         if self.buffer.size() < batch_size:
-            return  # Wait for the buffer to be filled
+            return None  # Wait for the buffer to be filled
 
         # Retrieve a batch of samples from the buffer
         transitions = self.buffer.sample(batch_size)
         state, action, reward, next_state, done = zip(*transitions)
 
-        state = torch.stack(state).to(self.device)
-        action = torch.tensor(action).to(self.device)
-        reward = torch.tensor(reward).to(self.device)
-        next_state = torch.stack(next_state).to(self.device)
-        done = torch.tensor(done).to(self.device)
+        # Convertir en tenseurs et déplacer vers le device approprié
+        state = torch.stack(state).to(self.device)  # Shape: (batch_size, 4, 84, 84)
+        next_state = torch.stack(next_state).to(self.device)  # Shape: (batch_size, 4, 84, 84)
+        action = torch.tensor(action, dtype=torch.long).to(self.device)  # Shape: (batch_size,)
+        reward = torch.tensor(reward, dtype=torch.float32).to(self.device)  # Shape: (batch_size,)
+        done = torch.tensor(done, dtype=torch.float32).to(self.device)  # Shape: (batch_size,)
+        print("Types des tenseurs:")
+        print(f"state dtype: {state.dtype}, shape: {state.shape}")
+        print(f"action dtype: {action.dtype}, shape: {action.shape}")
+        print(f"reward dtype: {reward.dtype}, shape: {reward.shape}")
+        print(f"done dtype: {done.dtype}, shape: {done.shape}")
 
         # Calculate current Q-values
-        q_values = self.dqn(state).gather(1, action.unsqueeze(1)).squeeze(1)
+        current_q_values = self.dqn(state)  # Shape: (batch_size, action_space)
+        current_q_value = current_q_values.gather(1, action.unsqueeze(1)).squeeze(1)  # Shape: (batch_size,)
 
         # Calculate target Q-values
         with torch.no_grad():
-            target_q_values = self.target_dqn(next_state).max(1)[0]
-            target = reward + self.gamma * target_q_values * (1 - done)
+            next_q_values = self.target_dqn(next_state)  # Shape: (batch_size, action_space)
+            max_next_q_values = next_q_values.max(1)[0]  # Shape: (batch_size,)
+            target_q_value = reward + self.gamma * max_next_q_values * (1 - done)  # Shape: (batch_size,)
 
-        # Update the DQN model
-        loss = F.mse_loss(q_values, target)
+        # Calculate loss and update
+        loss = F.mse_loss(current_q_value, target_q_value)
+        
+        # Debugging information
+        if torch.isnan(loss):
+            print("NaN detected in loss!")
+            print(f"Current Q-values: {current_q_value}")
+            print(f"Target Q-values: {target_q_value}")
+            print(f"Rewards: {reward}")
+            print(f"Done flags: {done}")
+            return None
+
         self.optimizer.zero_grad()
         loss.backward()
+        # Optional: gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.dqn.parameters(), max_norm=1.0)
         self.optimizer.step()
+
+        return loss.item()
 
 
 # Define evaluation functions
@@ -257,6 +292,17 @@ def _info(opt):
 def main(opt):
     _info(opt)
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    action_space = 5  # ou le nombre d'actions de ton environnement
+    model = DQN(action_space).to(device)
+    
+    # Test des dimensions
+    test_input = torch.zeros(32, 4, 84, 84).to(device)
+    output = model(test_input)
+    print(f"Forme de sortie: {output.shape}")
+    
+    # Vérification des convolutions
+    model.get_conv_output_size((4, 84, 84))
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     
@@ -307,3 +353,4 @@ def get_options():
 
 if __name__ == "__main__":
     main(get_options())
+    
