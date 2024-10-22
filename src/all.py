@@ -1,10 +1,12 @@
 import pathlib
 from collections import deque
+import time
 
 import crafter
 import numpy as np
 import torch
 from PIL import Image
+import matplotlib.pyplot as plt
 
 
 class Env:
@@ -46,6 +48,11 @@ class Env:
         # Retourner avec la forme correcte (channels, height, width)
         return torch.stack(list(self.state_buffer), 0), reward, done, info
 
+    # def render(self):
+    #     # obs = self.env.get_observation()  # Assure-toi que cette méthode existe
+    #     plt.imshow(obs)  # Affiche l'état
+    #     plt.axis('off')  # Masquer les axes
+    #     plt.pause(0.01)  # Pause pour permettre l'affichage
 
 
 class GrayScale:
@@ -130,14 +137,15 @@ class DQN(nn.Module):
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         
-        return x
+        return x  
 
 
     def get_conv_output_size(self, input_shape):
         """
         Fonction de debug pour vérifier les dimensions
         """
-        x = torch.zeros(1, *input_shape)  # Crée un tensor de test
+        device = next(self.parameters()).device  # Obtenir le device du modèle
+        x = torch.zeros(1, *input_shape).to(device)  # Crée un tensor de test sur le même device que le modèle
         x = F.relu(self.conv1(x))
         print(f"Après conv1: {x.shape}")
         x = F.relu(self.conv2(x))
@@ -148,12 +156,14 @@ class DQN(nn.Module):
         print(f"Après aplatissement: {x.shape}")
         return x.shape[1]
 
-
-class Agent:
+class Agent:    
     def __init__(self, dqn, action_space, epsilon):
         self.dqn = dqn
         self.action_space = action_space
         self.epsilon = epsilon
+
+    def act(self, state):  # Ajouter cette méthode
+        return self.select_action(state)
 
     def select_action(self, state):
         if random.random() < self.epsilon:  # Exploration
@@ -219,11 +229,11 @@ class DQNLearner:
         action = torch.tensor(action, dtype=torch.long).to(self.device)  # Shape: (batch_size,)
         reward = torch.tensor(reward, dtype=torch.float32).to(self.device)  # Shape: (batch_size,)
         done = torch.tensor(done, dtype=torch.float32).to(self.device)  # Shape: (batch_size,)
-        print("Types des tenseurs:")
-        print(f"state dtype: {state.dtype}, shape: {state.shape}")
-        print(f"action dtype: {action.dtype}, shape: {action.shape}")
-        print(f"reward dtype: {reward.dtype}, shape: {reward.shape}")
-        print(f"done dtype: {done.dtype}, shape: {done.shape}")
+        # print("Types des tenseurs:")
+        # print(f"state dtype: {state.dtype}, shape: {state.shape}")
+        # print(f"action dtype: {action.dtype}, shape: {action.shape}")
+        # print(f"reward dtype: {reward.dtype}, shape: {reward.shape}")
+        # print(f"done dtype: {done.dtype}, shape: {done.shape}")
 
         # Calculate current Q-values
         current_q_values = self.dqn(state)  # Shape: (batch_size, action_space)
@@ -292,17 +302,8 @@ def _info(opt):
 def main(opt):
     _info(opt)
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    action_space = 5  # ou le nombre d'actions de ton environnement
-    model = DQN(action_space).to(device)
     
-    # Test des dimensions
-    test_input = torch.zeros(32, 4, 84, 84).to(device)
-    output = model(test_input)
-    print(f"Forme de sortie: {output.shape}")
-    
-    # Vérification des convolutions
-    model.get_conv_output_size((4, 84, 84))
+    # Initialize environment
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     
@@ -311,6 +312,17 @@ def main(opt):
     dqn = DQN(action_space).to(opt.device)
     target_dqn = DQN(action_space).to(opt.device)
     target_dqn.load_state_dict(dqn.state_dict())  # Copy weights
+
+    # Charger les poids si disponibles
+    checkpoint_path = f"{opt.logdir}/dqn_weights_step_100.pth"  # Dernier poids enregistré
+    print(f"Chargement des poids depuis {checkpoint_path}")
+    if Path(checkpoint_path).exists() :  # Vérifie si les poids existent et si on veut les charger
+        dqn.load_state_dict(torch.load(checkpoint_path))
+        print(f"Poids du modèle chargés depuis {checkpoint_path}")
+    else:
+        print("Aucun poids chargé, démarrage avec un modèle aléatoire.")
+
+
     agent = Agent(dqn, action_space, opt.epsilon)
 
     # Initialize buffer and learner
@@ -326,15 +338,19 @@ def main(opt):
 
         action = agent.select_action(obs)
         next_obs, reward, done, info = env.step(action)
+
         buffer.add((obs, action, reward, next_obs, done))
         learner.update(opt.batch_size)
 
         obs = next_obs
         step_cnt += 1
 
-        # Evaluate at intervals
+        # Évaluer à intervalles
         if step_cnt % opt.eval_interval == 0:
             eval(agent, eval_env, step_cnt, opt)
+            # Sauvegarde des poids du modèle
+            torch.save(dqn.state_dict(), f"{opt.logdir}/dqn_weights_step_{step_cnt}.pth")
+
 
 
 def get_options():
@@ -346,9 +362,11 @@ def get_options():
     parser.add_argument("--logdir", default="logdir/")
     parser.add_argument("--steps", type=int, default=1_000_000, help="Total number of training steps.")
     parser.add_argument("--history_length", type=int, default=4)
-    parser.add_argument("--eval_interval", type=int, default=100_000, metavar="STEPS", help="Number of training steps between evaluations")
+    parser.add_argument("--eval_interval", type=int, default=10, metavar="STEPS", help="Number of training steps between evaluations")
     parser.add_argument("--eval_episodes", type=int, default=20, metavar="N", help="Number of evaluation episodes to average over")
+    parser.add_argument("--load_weights", action='store_true', help="Load weights from the last checkpoint if available.")  # Nouvel argument
     return parser.parse_args()
+
 
 
 if __name__ == "__main__":
