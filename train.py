@@ -44,14 +44,24 @@ class DQNModel(nn.Module):
 
 class DQNAgent:
     def __init__(self, action_num):
-        self.model = DQNModel(action_num)  # S'assurer que le modèle est correctement instancié
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
+        # Hyperparamètres pour l'epsilon-greedy
+        self.epsilon = 1.0           # Valeur initiale d'epsilon
+        self.epsilon_min = 0.1       # Valeur minimale d'epsilon
+        self.epsilon_decay = 0.995   # Facteur de décroissance d'epsilon
 
-    def act(self, observation):
-        # Prédire les valeurs Q et choisir l'action avec la valeur la plus élevée
-        with torch.no_grad():
-            q_values = self.model(observation)
-        return q_values.argmax().item()
+        self.action_num = action_num
+        self.replay_buffer = []
+        self.model = DQNModel(action_num)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+
+    def act(self, state):
+        # Choix de l'action avec epsilon-greedy
+        if random.random() < self.epsilon:
+            return random.randint(0, self.action_num - 1)  # Action aléatoire
+        else:
+            with torch.no_grad():
+                q_values = self.model(state)
+                return q_values.argmax().item()  # Action avec la plus grande valeur Q
 
     def train(self, batch_size, gamma):
         if len(self.replay_buffer) < batch_size:
@@ -84,6 +94,9 @@ class DQNAgent:
         loss.backward()
         self.optimizer.step()
 
+        # Décroissance d'epsilon
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
