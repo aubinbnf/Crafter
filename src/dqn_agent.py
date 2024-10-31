@@ -55,8 +55,9 @@ class ResizeImage:
 
 # Modèle DQN
 class DQN(nn.Module):
-    def __init__(self, action_space):
+    def __init__(self, action_space, device):
         super(DQN, self).__init__()
+        self.device = device  # Store the device
         self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
@@ -71,6 +72,7 @@ class DQN(nn.Module):
         x = F.relu(self.fc1(x))
         return self.fc2(x)
 
+
 # Agent pour choisir les actions
 class Agent:
     def __init__(self, dqn, action_space, epsilon):
@@ -81,8 +83,12 @@ class Agent:
     def act(self, state):
         if random.random() < self.epsilon:
             return random.randint(0, self.action_space - 1)
+        state = state.to(self.dqn.device)  # Move state to GPU
         with torch.no_grad():
             return self.dqn(state.unsqueeze(0)).argmax(dim=1).item()
+        
+    def update_epsilon(self):
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
 # Buffer pour stocker les transitions
 class ReplayBuffer:
@@ -95,6 +101,7 @@ class ReplayBuffer:
 
     def sample(self, batch_size):
         return random.sample(self.buffer, min(batch_size, len(self.buffer)))
+
     def __len__(self):
         return len(self.buffer)  # Ajout de la méthode __len__
 
@@ -105,49 +112,46 @@ class DQNLearner:
         self.target_dqn = target_dqn
         self.buffer = buffer
         self.device = device
-        self.optimizer = torch.optim.Adam(self.dqn.parameters(), lr=lr)
-        self.gamma = gamma
         self.logdir = logdir
-        self.weights_path = Path(logdir) / "weights" / "dqn_weights.pth"
-        os.makedirs(self.weights_path.parent, exist_ok=True)
+        self.gamma = gamma
+        self.optimizer = torch.optim.Adam(self.dqn.parameters(), lr=lr)
 
     def load_weights(self):
-        if self.weights_path.exists():
-            self.dqn.load_state_dict(torch.load(self.weights_path))
-            print("Weights loaded from", self.weights_path)
-        else:
-            print("No weights file found, starting from scratch.")
-
-    def save_weights(self):
-        print("self.weights_path: ", self.weights_path)
-        torch.save(self.dqn.state_dict(), self.weights_path)
-        print(f"Weights saved to {self.weights_path}")
+      weights_path = Path(self.logdir) / "weights.pth"
+      target_weights_path = Path(self.logdir) / "target_weights.pth"
+      if weights_path.exists() and target_weights_path.exists():
+          print("Weights loaded from ", self.logdir)
+          self.dqn.load_state_dict(torch.load(weights_path))
+          self.target_dqn.load_state_dict(torch.load(target_weights_path))
+      else:
+          print("Weights file not found. Starting training from scratch.")
 
 
     def update(self, batch_size):
         if len(self.buffer) < batch_size:
             return
-        transitions = self.buffer.sample(batch_size)
-        states, actions, rewards, next_states, dones = zip(*transitions)
+
+        batch = self.buffer.sample(batch_size)
+        states, actions, rewards, next_states, dones = zip(*batch)
 
         states = torch.stack(states).to(self.device)
+        actions = torch.tensor(actions).to(self.device)
+        rewards = torch.tensor(rewards).to(self.device)
         next_states = torch.stack(next_states).to(self.device)
-        actions = torch.tensor(actions, dtype=torch.long).to(self.device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
         dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
 
-        current_q_values = self.dqn(states).gather(1, actions.unsqueeze(1)).squeeze(1)
-        max_next_q_values = self.target_dqn(next_states).max(1)[0]
-        target_q_values = rewards + self.gamma * max_next_q_values * (1 - dones)
+        q_values = self.dqn(states)
+        next_q_values = self.target_dqn(next_states)
+        target_q_values = rewards + self.gamma * next_q_values.max(1)[0] * (1 - dones)
 
-        loss = F.mse_loss(current_q_values, target_q_values)
+        loss = F.mse_loss(q_values.gather(1, actions.unsqueeze(1)), target_q_values.unsqueeze(1))
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        
-        # Save weights after every update
-        print("Saving weights...")
-        self.save_weights()
+
+    def save_weights(self):
+        torch.save(self.dqn.state_dict(), self.logdir + "/weights.pth")
+        torch.save(self.target_dqn.state_dict(), self.logdir + "/target_weights.pth")
 
 
 # Fonction pour évaluation de l'agent

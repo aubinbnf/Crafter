@@ -43,7 +43,7 @@ def eval(agent, env, crt_step, opt):
         obs, done = env.reset(), False
         episodic_returns.append(0)
         while not done:
-            action = agent.act(obs)
+            action = agent.act(obs.to(opt.device))  # Move observation to GPU
             obs, reward, done, info = env.step(action)
             episodic_returns[-1] += reward
 
@@ -75,8 +75,8 @@ def main(opt):
     action_space = env.action_space.n
 
     # Initialize DQN model and DQNLearner
-    dqn = DQN(action_space).to(opt.device)
-    target_dqn = DQN(action_space).to(opt.device)
+    dqn = DQN(action_space, opt.device).to(opt.device)
+    target_dqn = DQN(action_space, opt.device).to(opt.device)
     buffer = ReplayBuffer(opt.buffer_size)  # Use buffer_size from options
     learner = DQNLearner(dqn, target_dqn, action_space, buffer, opt.device, opt.logdir)
     
@@ -91,17 +91,21 @@ def main(opt):
             ep_cnt += 1
             obs, done = env.reset(), False
 
-        action = agent.act(obs)
+        action = agent.act(obs.to(opt.device))
         obs, reward, done, info = env.step(action)
 
         step_cnt += 1
 
-        # Update DQN learner
-        learner.update(opt.batch_size)  # Use batch_size from options
+        # Met à jour l'epsilon
+        agent.update_epsilon()
 
-        # Evaluate periodically
+        # Met à jour le DQN learner
+        learner.update(opt.batch_size)
+
+        # Évaluation périodique
         if step_cnt % opt.eval_interval == 0:
             eval(agent, eval_env, step_cnt, opt)
+
 
 
 def get_options():
