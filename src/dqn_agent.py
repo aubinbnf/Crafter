@@ -116,8 +116,10 @@ class DQNLearner:
             print("No weights file found, starting from scratch.")
 
     def save_weights(self):
+        print("self.weights_path: ", self.weights_path)
         torch.save(self.dqn.state_dict(), self.weights_path)
-        print("Weights saved to", self.weights_path)
+        print(f"Weights saved to {self.weights_path}")
+
 
     def update(self, batch_size):
         if len(self.buffer) < batch_size:
