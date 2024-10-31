@@ -1,9 +1,11 @@
 import argparse
 import pickle
 from pathlib import Path
-
+import torch.nn as nn
+import torch.optim as optim
 import torch
-
+import random
+import torch.nn.functional as F
 from src.crafter_wrapper import Env
 
 
@@ -20,6 +22,67 @@ class RandomAgent:
     def act(self, observation):
         """ Since this is a random agent the observation is not used."""
         return self.policy.sample().item()
+
+
+class DQNModel(nn.Module):
+    def __init__(self, action_num):
+        super(DQNModel, self).__init__()
+        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)  # (4, 84, 84) -> (32, 20, 20)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2) # (32, 20, 20) -> (64, 9, 9)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)  # (64, 9, 9) -> (64, 7, 7)
+
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)  # Ajuster en fonction de la sortie du dernier Conv2d
+        self.fc2 = nn.Linear(512, action_num)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))      
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = x.view(64 * 7 * 7)  # Flatten
+        x = F.relu(self.fc1(x))
+        return self.fc2(x)
+
+class DQNAgent:
+    def __init__(self, action_num):
+        self.model = DQNModel(action_num)  # S'assurer que le modèle est correctement instancié
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
+
+    def act(self, observation):
+        # Prédire les valeurs Q et choisir l'action avec la valeur la plus élevée
+        with torch.no_grad():
+            q_values = self.model(observation)
+        return q_values.argmax().item()
+
+    def train(self, batch_size, gamma):
+        if len(self.replay_buffer) < batch_size:
+            return  # Pas assez d'expériences pour entraîner
+
+        # Échantillonner un batch d'expériences
+        experiences = random.sample(self.replay_buffer, batch_size)
+        states, actions, rewards, next_states, dones = zip(*experiences)
+
+        # Convertir en tensors
+        states = torch.stack(states)
+        actions = torch.tensor(actions)
+        rewards = torch.tensor(rewards, dtype=torch.float32)
+        next_states = torch.stack(next_states)
+        dones = torch.tensor(dones, dtype=torch.float32)
+
+        # Calculer les valeurs prédites Q pour les états
+        q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze()
+
+        # Calculer les valeurs cibles
+        with torch.no_grad():
+            next_q_values = self.model(next_states).max(1)[0]
+            target_q_values = rewards + (gamma * next_q_values * (1 - dones))
+
+        # Calculer la perte
+        loss = F.mse_loss(q_values, target_q_values)
+
+        # Rétropropagation
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
 
 def _save_stats(episodic_returns, crt_step, path):
@@ -74,7 +137,8 @@ def main(opt):
     opt.device = torch.device("cpu")
     env = Env("train", opt)
     eval_env = Env("eval", opt)
-    agent = RandomAgent(env.action_space.n)
+    # agent = RandomAgent(env.action_space.n)
+    agent = DQNAgent(env.action_space.n)
 
     # main loop
     ep_cnt, step_cnt, done = 0, 0, True
@@ -82,7 +146,6 @@ def main(opt):
         if done:
             ep_cnt += 1
             obs, done = env.reset(), False
-
         action = agent.act(obs)
         obs, reward, done, info = env.step(action)
 
