@@ -77,14 +77,14 @@ def main(opt):
     # Initialize DQN model and DQNLearner
     dqn = DQN(action_space).to(opt.device)
     target_dqn = DQN(action_space).to(opt.device)
-    buffer = ReplayBuffer(10000)
+    buffer = ReplayBuffer(opt.buffer_size)  # Use buffer_size from options
     learner = DQNLearner(dqn, target_dqn, action_space, buffer, opt.device, opt.logdir)
     
     # Load weights if available
     print("Loading weights...")
     learner.load_weights()
 
-    agent = Agent(dqn, action_space, epsilon=0.1)
+    agent = Agent(dqn, action_space, epsilon=opt.epsilon)  # Use epsilon from options
     ep_cnt, step_cnt, done = 0, 0, True
     while step_cnt < opt.steps or not done:
         if done:
@@ -97,22 +97,24 @@ def main(opt):
         step_cnt += 1
 
         # Update DQN learner
-        learner.update(32)
+        learner.update(opt.batch_size)  # Use batch_size from options
 
         # Evaluate periodically
         if step_cnt % opt.eval_interval == 0:
             eval(agent, eval_env, step_cnt, opt)
 
+
 def get_options():
     """Configures a parser. Extend this with all the best performing hyperparameters of
     your agent as defaults.
-
-    For devel purposes, feel free to change the number of training steps and
-    the evaluation interval.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', type=str, default='cpu', help="Device to use (cpu or cuda).")
     parser.add_argument("--logdir", default="logdir/random_agent/0", help="Directory for saving logs.")
+    parser.add_argument("--num_episodes", type=int, default=1000, help="Number of episodes for training.")
+    parser.add_argument("--buffer_size", type=int, default=10000, help="Size of the replay buffer.")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training.")
+    parser.add_argument("--epsilon", type=float, default=0.1, help="Epsilon for epsilon-greedy policy.")
     parser.add_argument(
         "--steps",
         type=int,

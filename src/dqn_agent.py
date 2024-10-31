@@ -9,6 +9,9 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from crafter_wrapper import Env
+import argparse
+import os
+from pathlib import Path
 
 # Classes pour traitement d'image
 class GrayScale:
@@ -161,3 +164,4 @@ def eval(agent, env, step_cnt, opt):
     print(f"[{step_cnt:06d}] Eval results: R/ep={avg_return:.2f}")
     with open(f"{opt.logdir}/DQN/0/eval_stats.pkl", "ab") as f:
         pickle.dump({"step": step_cnt, "avg_return": avg_return}, f)
+
