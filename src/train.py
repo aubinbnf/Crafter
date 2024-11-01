@@ -3,26 +3,10 @@ import pickle
 from pathlib import Path
 import torch
 from crafter_wrapper import Env
-from dqn_agent import CategoricalDQN, CategoricalDQNLearner, Agent, ReplayBuffer
-
-
-class RandomAgent:
-    """An example Random Agent"""
-
-    def __init__(self, action_num) -> None:
-        self.action_num = action_num
-        # a uniformly random policy
-        self.policy = torch.distributions.Categorical(
-            torch.ones(action_num) / action_num
-        )
-
-    def act(self, observation):
-        """Since this is a random agent, the observation is not used."""
-        return self.policy.sample().item()
-
+from dqn_agent import (DuelingCategoricalDQN, CategoricalDQNLearner, 
+                      Agent, ReplayBuffer)
 
 def _save_stats(episodic_returns, crt_step, path):
-    # save the evaluation stats
     episodic_returns = torch.tensor(episodic_returns)
     avg_return = episodic_returns.mean().item()
     print(
@@ -30,129 +14,139 @@ def _save_stats(episodic_returns, crt_step, path):
             crt_step, avg_return, episodic_returns.std().item()
         )
     )
-    with open(path + "/eval_stats.pkl", "ab") as f:
+    with open(path / "eval_stats.pkl", "ab") as f:
         pickle.dump({"step": crt_step, "avg_return": avg_return}, f)
 
-
 def eval(agent, env, crt_step, opt):
-    """Use the greedy, deterministic policy, not the epsilon-greedy policy you
-    might use during training.
-    """
     episodic_returns = []
     for _ in range(opt.eval_episodes):
         obs, done = env.reset(), False
         episodic_returns.append(0)
         while not done:
-            action = agent.act(obs.to(opt.device))  # Move observation to GPU
+            # Use evaluate=True to disable exploration during evaluation
+            action = agent.act(obs.to(opt.device), evaluate=True)
             obs, reward, done, info = env.step(action)
             episodic_returns[-1] += reward
 
-    _save_stats(episodic_returns, crt_step, opt.logdir)
-
-
-def _info(opt):
-    try:
-        int(opt.logdir.split("/")[-1])
-    except:
-        print(
-            "Warning, logdir path should end in a number indicating a separate"
-            + " training run, else the results might be overwritten."
-        )
-    if Path(opt.logdir).exists():
-        print("Warning! Logdir path exists, results can be corrupted.")
-    print(f"Saving results in {opt.logdir}.")
-    print(
-        f"Observations are of dims ({opt.history_length},84,84),"
-        + " with values between 0 and 1."
-    )
-
+    _save_stats(episodic_returns, crt_step, Path(opt.logdir))
 
 def main(opt):
-    _info(opt)
+    Path(opt.logdir).mkdir(parents=True, exist_ok=True)
+    
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {opt.device}")
+    
+    # Initialize environments
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     action_space = env.action_space.n
 
-    # Initialize Categorical DQN model and CategoricalDQNLearner
-    dqn = CategoricalDQN(action_space, opt.device, atoms=opt.atoms, Vmin=opt.Vmin, Vmax=opt.Vmax).to(opt.device)
-    target_dqn = CategoricalDQN(action_space, opt.device, atoms=opt.atoms, Vmin=opt.Vmin, Vmax=opt.Vmax).to(opt.device)
-    buffer = ReplayBuffer(opt.buffer_size)  # Use buffer_size from options
-    learner = CategoricalDQNLearner(dqn, target_dqn, action_space, buffer, opt.device, opt.logdir, gamma=opt.gamma, lr=opt.lr, Vmin=opt.Vmin, Vmax=opt.Vmax, atoms=opt.atoms)
+    # Initialize networks and learner
+    dqn = DuelingCategoricalDQN(
+        action_space, opt.device, 
+        atoms=opt.atoms, 
+        Vmin=opt.Vmin, 
+        Vmax=opt.Vmax
+    ).to(opt.device)
     
-    # Load weights if available
-    print("Loading weights...")
+    target_dqn = DuelingCategoricalDQN(
+        action_space, opt.device,
+        atoms=opt.atoms,
+        Vmin=opt.Vmin,
+        Vmax=opt.Vmax
+    ).to(opt.device)
+    
+    buffer = ReplayBuffer(opt.buffer_size, opt.history_length)
+    
+    learner = CategoricalDQNLearner(
+        dqn, target_dqn, action_space, buffer,
+        opt.device, opt.logdir,
+        gamma=opt.gamma,
+        lr=opt.lr,
+        Vmin=opt.Vmin,
+        Vmax=opt.Vmax,
+        atoms=opt.atoms,
+        target_update_freq=opt.target_update_freq
+    )
+    
+    # Load existing weights if available
     learner.load_weights()
 
-    agent = Agent(dqn, action_space, epsilon=opt.epsilon)  # Use epsilon from options
-    ep_cnt, step_cnt, done = 0, 0, True
-    while step_cnt < opt.steps or not done:
-        if done:
-            ep_cnt += 1
-            obs, done = env.reset(), False
+    # Initialize agent with higher initial epsilon for better exploration
+    agent = Agent(
+        dqn, action_space,
+        epsilon=1.0,  # Start with full exploration
+        epsilon_min=opt.epsilon_min,
+        epsilon_decay=opt.epsilon_decay
+    )
 
-        action = agent.act(obs.to(opt.device))
-        obs, reward, done, info = env.step(action)
+    total_steps = 0
+    episode = 0
+    
+    while total_steps < opt.steps:
+        episode += 1
+        obs, done = env.reset(), False
+        episode_reward = 0
+        episode_steps = 0
 
-        step_cnt += 1
+        while not done:
+            action = agent.act(obs.to(opt.device))
+            next_obs, reward, done, info = env.step(action)
+            
+            # Store transition in buffer
+            buffer.add(obs, action, reward, next_obs, done)
+            
+            obs = next_obs
+            episode_reward += reward
+            episode_steps += 1
+            total_steps += 1
 
-        # Met à jour l'epsilon
-        agent.update_epsilon()
+            # Update the network
+            if len(buffer) >= opt.batch_size:
+                learner.update(opt.batch_size)
 
-        # Met à jour le Categorical DQN learner
-        learner.update(opt.batch_size)
+            # Update exploration rate
+            agent.update_epsilon()
 
-        # Évaluation périodique
-        if step_cnt % opt.eval_interval == 0:
-            eval(agent, eval_env, step_cnt, opt)
+            # Periodic evaluation
+            if total_steps % opt.eval_interval == 0:
+                eval(agent, eval_env, total_steps, opt)
+                learner.save_weights()
 
+        # Episode end logging
+        if episode % 10 == 0:
+            print(f"Episode {episode}, Steps: {total_steps}, Reward: {episode_reward:.2f}, Epsilon: {agent.epsilon:.3f}")
 
 def get_options():
-    """Configures a parser. Extend this with all the best performing hyperparameters of
-    your agent as defaults.
-    """
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', type=str, default='cpu', help="Device to use (cpu or cuda).")
-    parser.add_argument("--logdir", default="logdir/random_agent/0", help="Directory for saving logs.")
-    parser.add_argument("--num_episodes", type=int, default=1000, help="Number of episodes for training.")
-    parser.add_argument("--buffer_size", type=int, default=10000, help="Size of the replay buffer.")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training.")
-    parser.add_argument("--epsilon", type=float, default=0.1, help="Epsilon for epsilon-greedy policy.")
-    parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor.")
-    parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate.")
-    parser.add_argument("--Vmin", type=float, default=-10, help="Minimum value for the support in Categorical DQN.")
-    parser.add_argument("--Vmax", type=float, default=10, help="Maximum value for the support in Categorical DQN.")
-    parser.add_argument("--atoms", type=int, default=51, help="Number of atoms for distributional output in Categorical DQN.")
-    parser.add_argument(
-        "--steps",
-        type=int,
-        metavar="STEPS",
-        default=1_000_000,
-        help="Total number of training steps.",
-    )
-    parser.add_argument(
-        "-hist-len",
-        "--history-length",
-        default=4,
-        type=int,
-        help="The number of frames to stack when creating an observation.",
-    )
-    parser.add_argument(
-        "--eval-interval",
-        type=int,
-        default=100_000,
-        metavar="STEPS",
-        help="Number of training steps between evaluations",
-    )
-    parser.add_argument(
-        "--eval-episodes",
-        type=int,
-        default=20,
-        metavar="N",
-        help="Number of evaluation episodes to average over",
-    )
+    
+    # Environment parameters
+    parser.add_argument("--logdir", default="logdir/categorical_dqn/0", help="Directory for saving logs")
+    parser.add_argument("--history-length", default=4, type=int, help="Number of frames to stack")
+    
+    # Training parameters
+    parser.add_argument("--steps", type=int, default=1_000_000, help="Total number of training steps")
+    parser.add_argument("--buffer-size", type=int, default=100000, help="Size of replay buffer")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
+    parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate")
+    parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
+    
+    # DQN specific parameters
+    parser.add_argument("--target-update-freq", type=int, default=10000, help="Target network update frequency")
+    parser.add_argument("--epsilon-min", type=float, default=0.01, help="Minimum epsilon value")
+    parser.add_argument("--epsilon-decay", type=float, default=0.995, help="Epsilon decay rate")
+    
+    # Categorical DQN parameters
+    parser.add_argument("--atoms", type=int, default=51, help="Number of atoms for categorical DQN")
+    parser.add_argument("--Vmin", type=float, default=-10, help="Minimum value of support")
+    parser.add_argument("--Vmax", type=float, default=10, help="Maximum value of support")
+    
+    # Evaluation parameters
+    parser.add_argument("--eval-interval", type=int, default=10000, help="Evaluation interval")
+    parser.add_argument("--eval-episodes", type=int, default=20, help="Number of evaluation episodes")
+    
     return parser.parse_args()
 
-
 if __name__ == "__main__":
-    main(get_options())
+    options = get_options()
+    main(options)
