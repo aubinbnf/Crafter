@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 from crafter_wrapper import Env
 from dqn_agent import (DuelingCategoricalDQN, CategoricalDQNLearner, 
-                      Agent, ReplayBuffer)
+                      Agent, PrioritizedReplayBuffer)
 
 def _save_stats(episodic_returns, crt_step, path):
     episodic_returns = torch.tensor(episodic_returns)
@@ -49,7 +49,8 @@ def main(opt):
                                        Vmin=opt.Vmin,
                                        Vmax=opt.Vmax).to(opt.device)
     
-    buffer = ReplayBuffer(opt.buffer_size, opt.history_length)
+    buffer = PrioritizedReplayBuffer(capacity=opt.buffer_size, history_length=opt.history_length)
+
     
     learner = CategoricalDQNLearner(
         dqn, target_dqn, action_space, buffer, opt.device, opt.logdir,

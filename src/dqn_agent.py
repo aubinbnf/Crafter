@@ -235,10 +235,11 @@ class Agent:
 class CategoricalDQNLearner:
     def __init__(self, dqn, target_dqn, action_space, buffer, device, logdir, 
                  gamma=0.99, lr=0.00025, Vmin=-10, Vmax=10, atoms=51, 
-                 target_update_freq=8000):
+                 target_update_freq=8000, tau=0.005):
         self.dqn = dqn
         self.target_dqn = target_dqn
         self.target_update_freq = target_update_freq
+        self.tau = tau  # Add tau parameter for soft updates
         self.update_count = 0
         
         self.buffer = buffer
@@ -252,6 +253,13 @@ class CategoricalDQNLearner:
         self.atoms = atoms
         self.delta_z = (Vmax - Vmin) / (atoms - 1)
         self.support = torch.linspace(Vmin, Vmax, atoms).to(device)
+
+    def _soft_update_target_network(self):
+        """Soft update of target network from policy network."""
+        for target_param, param in zip(self.target_dqn.parameters(), self.dqn.parameters()):
+            target_param.data.copy_(
+                target_param.data * (1.0 - self.tau) + param.data * self.tau
+            )
 
     def update(self, batch_size):
         if len(self.buffer) < batch_size:
@@ -304,9 +312,10 @@ class CategoricalDQNLearner:
         torch.nn.utils.clip_grad_norm_(self.dqn.parameters(), max_norm=10)
         self.optimizer.step()
 
+        # Use soft update instead of hard update
+        self._soft_update_target_network()
+
         self.update_count += 1
-        if self.update_count % self.target_update_freq == 0:
-            self.target_dqn.load_state_dict(self.dqn.state_dict())
 
     def save_weights(self):
         torch.save(self.dqn.state_dict(), str(Path(self.logdir) / "weights.pth"))
