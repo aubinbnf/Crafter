@@ -75,20 +75,23 @@ class DQN(nn.Module):
 
 # Agent pour choisir les actions
 class Agent:
-    def __init__(self, dqn, action_space, epsilon):
+    def __init__(self, dqn, action_space, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995):
         self.dqn = dqn
         self.action_space = action_space
         self.epsilon = epsilon
+        self.epsilon_min = epsilon_min  # Assure-toi que cet attribut est défini
+        self.epsilon_decay = epsilon_decay  # Assure-toi que cet attribut est défini
 
     def act(self, state):
         if random.random() < self.epsilon:
             return random.randint(0, self.action_space - 1)
-        state = state.to(self.dqn.device)  # Move state to GPU
+        state = state.to(self.dqn.device)
         with torch.no_grad():
             return self.dqn(state.unsqueeze(0)).argmax(dim=1).item()
-        
+
     def update_epsilon(self):
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
 
 # Buffer pour stocker les transitions
 class ReplayBuffer:
