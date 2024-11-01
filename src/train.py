@@ -3,7 +3,7 @@ import pickle
 from pathlib import Path
 import torch
 from crafter_wrapper import Env
-from dqn_agent import DQN, DQNLearner, Agent, ReplayBuffer
+from dqn_agent import CategoricalDQN, CategoricalDQNLearner, Agent, ReplayBuffer
 
 
 class RandomAgent:
@@ -74,11 +74,11 @@ def main(opt):
     eval_env = Env("eval", opt)
     action_space = env.action_space.n
 
-    # Initialize DQN model and DQNLearner
-    dqn = DQN(action_space, opt.device).to(opt.device)
-    target_dqn = DQN(action_space, opt.device).to(opt.device)
+    # Initialize Categorical DQN model and CategoricalDQNLearner
+    dqn = CategoricalDQN(action_space, opt.device, atoms=opt.atoms, Vmin=opt.Vmin, Vmax=opt.Vmax).to(opt.device)
+    target_dqn = CategoricalDQN(action_space, opt.device, atoms=opt.atoms, Vmin=opt.Vmin, Vmax=opt.Vmax).to(opt.device)
     buffer = ReplayBuffer(opt.buffer_size)  # Use buffer_size from options
-    learner = DQNLearner(dqn, target_dqn, action_space, buffer, opt.device, opt.logdir)
+    learner = CategoricalDQNLearner(dqn, target_dqn, action_space, buffer, opt.device, opt.logdir, gamma=opt.gamma, lr=opt.lr, Vmin=opt.Vmin, Vmax=opt.Vmax, atoms=opt.atoms)
     
     # Load weights if available
     print("Loading weights...")
@@ -99,13 +99,12 @@ def main(opt):
         # Met à jour l'epsilon
         agent.update_epsilon()
 
-        # Met à jour le DQN learner
+        # Met à jour le Categorical DQN learner
         learner.update(opt.batch_size)
 
         # Évaluation périodique
         if step_cnt % opt.eval_interval == 0:
             eval(agent, eval_env, step_cnt, opt)
-
 
 
 def get_options():
@@ -119,6 +118,11 @@ def get_options():
     parser.add_argument("--buffer_size", type=int, default=10000, help="Size of the replay buffer.")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training.")
     parser.add_argument("--epsilon", type=float, default=0.1, help="Epsilon for epsilon-greedy policy.")
+    parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor.")
+    parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate.")
+    parser.add_argument("--Vmin", type=float, default=-10, help="Minimum value for the support in Categorical DQN.")
+    parser.add_argument("--Vmax", type=float, default=10, help="Maximum value for the support in Categorical DQN.")
+    parser.add_argument("--atoms", type=int, default=51, help="Number of atoms for distributional output in Categorical DQN.")
     parser.add_argument(
         "--steps",
         type=int,

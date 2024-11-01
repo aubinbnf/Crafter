@@ -9,11 +9,7 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from crafter_wrapper import Env
-import argparse
-import os
-from pathlib import Path
 
-# Classes pour traitement d'image
 class GrayScale:
     def __init__(self, env):
         self._env = env
@@ -52,17 +48,68 @@ class ResizeImage:
         image = Image.fromarray(image)
         image = image.resize((84, 84), Image.NEAREST)
         return np.array(image)
+    
 
-# Modèle DQN
-class DQN(nn.Module):
-    def __init__(self, action_space, device):
-        super(DQN, self).__init__()
-        self.device = device  # Store the device
+class Agent:
+    def __init__(self, dqn, action_space, epsilon=0.1, epsilon_min=0.01, epsilon_decay=0.995):
+        self.dqn = dqn
+        self.action_space = action_space
+        self.epsilon = epsilon
+        self.epsilon_min = epsilon_min
+        self.epsilon_decay = epsilon_decay
+
+    def act(self, state):
+        if random.random() < self.epsilon:
+            return random.randint(0, self.action_space - 1)
+        else:
+            with torch.no_grad():
+                q_values = self.dqn.q_values(state.unsqueeze(0))
+                return q_values.argmax().item()
+
+    def update_epsilon(self):
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
+
+class ReplayBuffer:
+    def __init__(self, capacity):
+        self.buffer = deque(maxlen=capacity)
+
+    def add(self, state, action, reward, next_state, done):
+        self.buffer.append((state, action, reward, next_state, done))
+
+    def sample(self, batch_size):
+        batch = random.sample(self.buffer, batch_size)
+        states, actions, rewards, next_states, dones = zip(*batch)
+        return (
+            torch.stack(states),
+            actions,
+            rewards,
+            torch.stack(next_states),
+            dones,
+        )
+
+    def __len__(self):
+        return len(self.buffer)
+
+
+class CategoricalDQN(nn.Module):
+    def __init__(self, action_space, device, atoms=51, Vmin=-10, Vmax=10):
+        super(CategoricalDQN, self).__init__()
+        self.device = device
+        self.action_space = action_space
+        self.atoms = atoms
+        self.Vmin = Vmin
+        self.Vmax = Vmax
+        self.delta_z = (Vmax - Vmin) / (atoms - 1)
+        self.support = torch.linspace(Vmin, Vmax, atoms).to(device)
+
+        # Convolutional layers
         self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        # Fully connected layers for distribution output
         self.fc1 = nn.Linear(3136, 512)
-        self.fc2 = nn.Linear(512, action_space)
+        self.fc2 = nn.Linear(512, action_space * atoms)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
@@ -70,47 +117,16 @@ class DQN(nn.Module):
         x = F.relu(self.conv3(x))
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
-        return self.fc2(x)
+        x = self.fc2(x).view(-1, self.action_space, self.atoms)
+        return F.softmax(x, dim=2)  # Output is a distribution over the atoms
 
+    def q_values(self, x):
+        dist = self(x)
+        q_values = torch.sum(dist * self.support, dim=2)  # Compute the expected Q-values
+        return q_values
 
-# Agent pour choisir les actions
-class Agent:
-    def __init__(self, dqn, action_space, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995):
-        self.dqn = dqn
-        self.action_space = action_space
-        self.epsilon = epsilon
-        self.epsilon_min = epsilon_min  # Assure-toi que cet attribut est défini
-        self.epsilon_decay = epsilon_decay  # Assure-toi que cet attribut est défini
-
-    def act(self, state):
-        if random.random() < self.epsilon:
-            return random.randint(0, self.action_space - 1)
-        state = state.to(self.dqn.device)
-        with torch.no_grad():
-            return self.dqn(state.unsqueeze(0)).argmax(dim=1).item()
-
-    def update_epsilon(self):
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-
-
-# Buffer pour stocker les transitions
-class ReplayBuffer:
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.buffer = deque(maxlen=capacity)
-
-    def add(self, experience):
-        self.buffer.append(experience)
-
-    def sample(self, batch_size):
-        return random.sample(self.buffer, min(batch_size, len(self.buffer)))
-
-    def __len__(self):
-        return len(self.buffer)  # Ajout de la méthode __len__
-
-# Classe pour apprentissage DQN
-class DQNLearner:
-    def __init__(self, dqn, target_dqn, action_space, buffer, device, logdir, gamma=0.99, lr=0.0001):
+class CategoricalDQNLearner:
+    def __init__(self, dqn, target_dqn, action_space, buffer, device, logdir, gamma=0.99, lr=0.0001, Vmin=-10, Vmax=10, atoms=51):
         self.dqn = dqn
         self.target_dqn = target_dqn
         self.buffer = buffer
@@ -118,17 +134,21 @@ class DQNLearner:
         self.logdir = logdir
         self.gamma = gamma
         self.optimizer = torch.optim.Adam(self.dqn.parameters(), lr=lr)
+        self.Vmin = Vmin
+        self.Vmax = Vmax
+        self.atoms = atoms
+        self.delta_z = (Vmax - Vmin) / (atoms - 1)
+        self.support = torch.linspace(Vmin, Vmax, atoms).to(device)
 
     def load_weights(self):
-      weights_path = Path(self.logdir) / "weights.pth"
-      target_weights_path = Path(self.logdir) / "target_weights.pth"
-      if weights_path.exists() and target_weights_path.exists():
-          print("Weights loaded from ", self.logdir)
-          self.dqn.load_state_dict(torch.load(weights_path))
-          self.target_dqn.load_state_dict(torch.load(target_weights_path))
-      else:
-          print("Weights file not found. Starting training from scratch.")
-
+        weights_path = Path(self.logdir) / "weights.pth"
+        target_weights_path = Path(self.logdir) / "target_weights.pth"
+        if weights_path.exists() and target_weights_path.exists():
+            print("Weights loaded from ", self.logdir)
+            self.dqn.load_state_dict(torch.load(weights_path))
+            self.target_dqn.load_state_dict(torch.load(target_weights_path))
+        else:
+            print("Weights file not found. Starting training from scratch.")
 
     def update(self, batch_size):
         if len(self.buffer) < batch_size:
@@ -143,11 +163,27 @@ class DQNLearner:
         next_states = torch.stack(next_states).to(self.device)
         dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
 
-        q_values = self.dqn(states)
-        next_q_values = self.target_dqn(next_states)
-        target_q_values = rewards + self.gamma * next_q_values.max(1)[0] * (1 - dones)
+        # Current distribution
+        dist = self.dqn(states)
+        dist = dist[range(batch_size), actions]
 
-        loss = F.mse_loss(q_values.gather(1, actions.unsqueeze(1)), target_q_values.unsqueeze(1))
+        # Compute target distribution
+        next_dist = self.target_dqn(next_states)
+        next_actions = next_dist.sum(2).argmax(1)
+        next_dist = next_dist[range(batch_size), next_actions]
+
+        Tz = rewards.unsqueeze(1) + (1 - dones).unsqueeze(1) * self.gamma * self.support.unsqueeze(0)
+        Tz = Tz.clamp(self.Vmin, self.Vmax)
+        b = (Tz - self.Vmin) / self.delta_z
+        l = b.floor().long()
+        u = b.ceil().long()
+
+        proj_dist = torch.zeros(next_dist.size(), device=self.device)
+        for i in range(batch_size):
+            proj_dist[i].index_add_(0, l[i], next_dist[i] * (u[i] - b[i]))
+            proj_dist[i].index_add_(0, u[i], next_dist[i] * (b[i] - l[i]))
+
+        loss = -(proj_dist * dist.log()).sum(1).mean()
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -155,20 +191,3 @@ class DQNLearner:
     def save_weights(self):
         torch.save(self.dqn.state_dict(), self.logdir + "/weights.pth")
         torch.save(self.target_dqn.state_dict(), self.logdir + "/target_weights.pth")
-
-
-# Fonction pour évaluation de l'agent
-def eval(agent, env, step_cnt, opt):
-    episodic_returns = []
-    for _ in range(opt.eval_episodes):
-        obs, done = env.reset(), False
-        episodic_returns.append(0)
-        while not done:
-            action = agent.act(obs)
-            obs, reward, done, _ = env.step(action)
-            episodic_returns[-1] += reward
-    avg_return = np.mean(episodic_returns)
-    print(f"[{step_cnt:06d}] Eval results: R/ep={avg_return:.2f}")
-    with open(f"{opt.logdir}/DQN/0/eval_stats.pkl", "ab") as f:
-        pickle.dump({"step": step_cnt, "avg_return": avg_return}, f)
-
