@@ -36,10 +36,17 @@ class DQNModel(nn.Module):
         self.fc2 = nn.Linear(512, action_num)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))      
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+        # print("Input shape:", x.shape)
+        x = F.relu(self.conv1(x))   
+        # print("After conv1 shape:", x.shape)   
         x = F.relu(self.conv2(x))
+        # print("After conv1 shape:", x.shape) 
         x = F.relu(self.conv3(x))
-        x = x.view(64 * 7 * 7)  # Flatten
+        # print("After conv3 shape:", x.shape) 
+        x = x.view(x.size(0), -1)  # Flatten while keeping batch size
+        # print("After flattening shape:", x.shape) 
         x = F.relu(self.fc1(x))
         return self.fc2(x)
 
@@ -54,6 +61,7 @@ class DQNAgent:
         self.model = DQNModel(action_num).to(self.device)
         self.target_model = DQNModel(action_num).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001)
+        self.target_update_frequency = 1000
 
     def act(self, state):
         # Epsilon greedy
@@ -64,37 +72,37 @@ class DQNAgent:
                 q_values = self.model(state)
                 return q_values.argmax().item()
 
-def train(self, batch_size, gamma, step_count):
-    if len(self.replay_buffer) < batch_size:
-        return
+    def train(self, batch_size, gamma, step_count):
+        if len(self.replay_buffer) < batch_size:
+            return
 
-    # Sampling batch of experiences
-    experiences = random.sample(self.replay_buffer, batch_size)
-    states, actions, rewards, next_states, dones = zip(*experiences)
+        # Sampling batch of experiences
+        experiences = random.sample(self.replay_buffer, batch_size)
+        states, actions, rewards, next_states, dones = zip(*experiences)
 
-    states = torch.stack(states).to(self.device)
-    actions = torch.tensor(actions).to(self.device)
-    rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-    next_states = torch.stack(next_states).to(self.device)
-    dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
+        states = torch.stack(states).to(self.device)
+        actions = torch.tensor(actions).to(self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
+        next_states = torch.stack(next_states).to(self.device)
+        dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
 
-    q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze()
-    
-    with torch.no_grad():
-        next_q_values = self.target_model(next_states).max(1)[0]
-        target_q_values = rewards + (gamma * next_q_values * (1 - dones))
+        q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze()
+        
+        with torch.no_grad():
+            next_q_values = self.target_model(next_states).max(1)[0]
+            target_q_values = rewards + (gamma * next_q_values * (1 - dones))
 
-    loss = F.mse_loss(q_values, target_q_values)
+        loss = F.mse_loss(q_values, target_q_values)
 
-    self.optimizer.zero_grad()
-    loss.backward()
-    self.optimizer.step()
-    
-    if self.epsilon > self.epsilon_min:
-        self.epsilon *= self.epsilon_decay
-    
-    if step_count % self.target_update_frequency == 0:
-        self.target_model.load_state_dict(self.model.state_dict())
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
+        
+        if step_count % self.target_update_frequency == 0:
+            self.target_model.load_state_dict(self.model.state_dict())
 
 
 def _save_stats(episodic_returns, crt_step, path):
