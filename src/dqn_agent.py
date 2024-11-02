@@ -235,7 +235,7 @@ class Agent:
 class CategoricalDQNLearner:
     def __init__(self, dqn, target_dqn, action_space, buffer, device, logdir, 
                  gamma=0.99, lr=0.00025, Vmin=-10, Vmax=10, atoms=51, 
-                 target_update_freq=8000, tau=0.005):
+                 target_update_freq=8000, tau=0.005, drive_folder=None):
         self.dqn = dqn
         self.target_dqn = target_dqn
         self.target_update_freq = target_update_freq
@@ -253,6 +253,35 @@ class CategoricalDQNLearner:
         self.atoms = atoms
         self.delta_z = (Vmax - Vmin) / (atoms - 1)
         self.support = torch.linspace(Vmin, Vmax, atoms).to(device)
+        
+        # Ajouter le chemin du dossier Google Drive
+        self.drive_folder = drive_folder
+
+    def save_weights(self):
+        # Sauvegarde locale
+        local_path = Path(self.logdir)
+        local_path.mkdir(parents=True, exist_ok=True)
+        torch.save(self.dqn.state_dict(), local_path / "weights.pth")
+        torch.save(self.target_dqn.state_dict(), local_path / "target_weights.pth")
+        print(f"Poids sauvegardés localement dans {local_path}")
+
+        # Sauvegarde sur Google Drive si un chemin est spécifié
+        if self.drive_folder:
+            drive_path = Path(self.drive_folder)
+            drive_path.mkdir(parents=True, exist_ok=True)
+            torch.save(self.dqn.state_dict(), drive_path / "weights.pth")
+            torch.save(self.target_dqn.state_dict(), drive_path / "target_weights.pth")
+            print(f"Poids sauvegardés dans Google Drive : {drive_path}")
+
+    def load_weights(self):
+        weights_path = Path(self.logdir) / "weights.pth"
+        target_weights_path = Path(self.logdir) / "target_weights.pth"
+        if weights_path.exists() and target_weights_path.exists():
+            self.dqn.load_state_dict(torch.load(weights_path))
+            self.target_dqn.load_state_dict(torch.load(target_weights_path))
+            print("Poids chargés depuis", self.logdir)
+        else:
+            print("Aucun poids trouvé. Début de l'entraînement depuis zéro.")
 
     def _soft_update_target_network(self):
         """Soft update of target network from policy network."""
@@ -317,16 +346,16 @@ class CategoricalDQNLearner:
 
         self.update_count += 1
 
-    def save_weights(self):
-        torch.save(self.dqn.state_dict(), str(Path(self.logdir) / "weights.pth"))
-        torch.save(self.target_dqn.state_dict(), str(Path(self.logdir) / "target_weights.pth"))
+    # def save_weights(self):
+    #     torch.save(self.dqn.state_dict(), str(Path(self.logdir) / "weights.pth"))
+    #     torch.save(self.target_dqn.state_dict(), str(Path(self.logdir) / "target_weights.pth"))
 
-    def load_weights(self):
-        weights_path = Path(self.logdir) / "weights.pth"
-        target_weights_path = Path(self.logdir) / "target_weights.pth"
-        if weights_path.exists() and target_weights_path.exists():
-            self.dqn.load_state_dict(torch.load(weights_path))
-            self.target_dqn.load_state_dict(torch.load(target_weights_path))
-            print("Weights loaded from", self.logdir)
-        else:
-            print("No weights found. Starting from scratch.")
+    # def load_weights(self):
+    #     weights_path = Path(self.logdir) / "weights.pth"
+    #     target_weights_path = Path(self.logdir) / "target_weights.pth"
+    #     if weights_path.exists() and target_weights_path.exists():
+    #         self.dqn.load_state_dict(torch.load(weights_path))
+    #         self.target_dqn.load_state_dict(torch.load(target_weights_path))
+    #         print("Weights loaded from", self.logdir)
+    #     else:
+    #         print("No weights found. Starting from scratch.")

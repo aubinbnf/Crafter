@@ -5,8 +5,11 @@ import torch
 from crafter_wrapper import Env
 from dqn_agent import (DuelingCategoricalDQN, CategoricalDQNLearner, 
                       Agent, PrioritizedReplayBuffer)
+import json
+import shutil
+from pathlib import Path
 
-def _save_stats(episodic_returns, crt_step, path):
+def _save_stats(episodic_returns, crt_step, path, drive_path=None):
     episodic_returns = torch.tensor(episodic_returns)
     avg_return = episodic_returns.mean().item()
     print(
@@ -14,10 +17,17 @@ def _save_stats(episodic_returns, crt_step, path):
             crt_step, avg_return, episodic_returns.std().item()
         )
     )
+    # Sauvegarde locale
     with open(path / "eval_stats.pkl", "ab") as f:
         pickle.dump({"step": crt_step, "avg_return": avg_return}, f)
 
-def eval(agent, env, crt_step, opt):
+    # Sauvegarde sur Google Drive
+    if drive_path:
+        drive_path.mkdir(parents=True, exist_ok=True)
+        shutil.copy(path / "eval_stats.pkl", drive_path / "eval_stats.pkl")
+        print(f"Fichier sauvegardé dans Google Drive : {drive_path / 'eval_stats.pkl'}")
+
+def eval(agent, env, crt_step, opt, drive_path=None):
     episodic_returns = []
     for _ in range(opt.eval_episodes):
         obs, done = env.reset(), False
@@ -26,9 +36,12 @@ def eval(agent, env, crt_step, opt):
             action = agent.act(obs.to(opt.device), evaluate=True)
             obs, reward, done, info = env.step(action)
             episodic_returns[-1] += reward
-    _save_stats(episodic_returns, crt_step, Path(opt.logdir))
+    _save_stats(episodic_returns, crt_step, Path(opt.logdir), drive_path)
 
 def main(opt):
+    # Chemin Google Drive
+    drive_path = Path("/content/drive/MyDrive/your_project_folder/random_agent/0")
+    
     Path(opt.logdir).mkdir(parents=True, exist_ok=True)
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {opt.device}")
@@ -42,7 +55,7 @@ def main(opt):
     dqn = DuelingCategoricalDQN(action_space, opt.device, 
                                 atoms=opt.atoms, 
                                 Vmin=opt.Vmin, 
-                                Vmax=opt.Vmax).to(opt.device)
+                                Vmax=opt.Vmax,).to(opt.device)
     
     target_dqn = DuelingCategoricalDQN(action_space, opt.device,
                                        atoms=opt.atoms,
@@ -50,12 +63,11 @@ def main(opt):
                                        Vmax=opt.Vmax).to(opt.device)
     
     buffer = PrioritizedReplayBuffer(capacity=opt.buffer_size, history_length=opt.history_length)
-
     
     learner = CategoricalDQNLearner(
         dqn, target_dqn, action_space, buffer, opt.device, opt.logdir,
         gamma=opt.gamma, lr=opt.lr, Vmin=opt.Vmin, Vmax=opt.Vmax, atoms=opt.atoms,
-        target_update_freq=opt.target_update_freq, tau=0.005  # Add soft update parameter tau
+        target_update_freq=opt.target_update_freq, tau=0.005, drive_folder="/content/drive/MyDrive/your_project_folder/weights"
     )
     
     # Load weights if available
@@ -66,7 +78,7 @@ def main(opt):
         dqn, action_space,
         epsilon=1.0, 
         epsilon_min=opt.epsilon_min,
-        epsilon_decay=opt.epsilon_decay_slow  # Use slower decay rate
+        epsilon_decay=opt.epsilon_decay_slow
     )
 
     total_steps = 0
@@ -96,10 +108,12 @@ def main(opt):
             # Update exploration rate
             agent.update_epsilon()
 
-            # Periodic evaluation with increased frequency initially
+            # Periodic evaluation
             if total_steps % opt.eval_interval == 0:
-                eval(agent, eval_env, total_steps, opt)
+                eval(agent, eval_env, total_steps, opt, drive_path)
                 learner.save_weights()
+                shutil.copy(opt.logdir / "weights.pt", drive_path / "weights.pt")
+                print(f"Poids sauvegardés dans Google Drive : {drive_path / 'weights.pt'}")
 
         # Log episode end details every 10 episodes
         if episode % 10 == 0:
