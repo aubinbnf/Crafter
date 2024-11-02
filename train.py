@@ -7,6 +7,7 @@ import torch
 import random
 import torch.nn.functional as F
 from src.crafter_wrapper import Env
+from collections import deque
 
 
 class RandomAgent:
@@ -49,9 +50,10 @@ class DQNAgent:
         self.epsilon_decay = 0.995   # Decay factor
 
         self.action_num = action_num
-        self.replay_buffer = []
+        self.replay_buffer = deque(maxlen=10000)
         self.model = DQNModel(action_num)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        self.target_model = DQNModel(action_num)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001)
 
     def act(self, state):
         # Epsilon greedy
@@ -62,7 +64,7 @@ class DQNAgent:
                 q_values = self.model(state)
                 return q_values.argmax().item()
 
-    def train(self, batch_size, gamma):
+    def train(self, batch_size, gamma, step_count):
 
         if len(self.replay_buffer) < batch_size:
             return  # If not enough experiences
@@ -80,9 +82,9 @@ class DQNAgent:
         # Predicted values    
         q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze()
 
-        # Target values
+        # Target values (with target network)
         with torch.no_grad():
-            next_q_values = self.model(next_states).max(1)[0]
+            next_q_values = self.target_model(next_states).max(1)[0]
             target_q_values = rewards + (gamma * next_q_values * (1 - dones))
 
         # Loss calculation
@@ -96,6 +98,10 @@ class DQNAgent:
         # Update epsilon
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
+
+        # Update periodicaly target network 
+        if step_count % self.target_update_frequency == 0:
+            self.target_model.load_state_dict(self.model.state_dict())
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
@@ -161,7 +167,9 @@ def main(opt):
         action = agent.act(obs)
         obs, reward, done, info = env.step(action)
 
-        agent.train(batch_size=32, gamma=0.99)
+        agent.replay_buffer.append((obs, action, reward, obs, done))
+
+        agent.train(batch_size=64, gamma=0.99, step_count=step_cnt)
 
         step_cnt += 1
 
