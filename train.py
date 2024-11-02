@@ -44,15 +44,15 @@ class DQNModel(nn.Module):
         return self.fc2(x)
 
 class DQNAgent:
-    def __init__(self, action_num):
-        self.epsilon = 1.0           # Init epsilon value
-        self.epsilon_min = 0.1       # Min epsilon value
-        self.epsilon_decay = 0.995   # Decay factor
-
+    def __init__(self, action_num, device):
+        self.device = device
+        self.epsilon = 1.0
+        self.epsilon_min = 0.1
+        self.epsilon_decay = 0.995
         self.action_num = action_num
         self.replay_buffer = deque(maxlen=10000)
-        self.model = DQNModel(action_num)
-        self.target_model = DQNModel(action_num)
+        self.model = DQNModel(action_num).to(self.device)
+        self.target_model = DQNModel(action_num).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001)
 
     def act(self, state):
@@ -64,44 +64,38 @@ class DQNAgent:
                 q_values = self.model(state)
                 return q_values.argmax().item()
 
-    def train(self, batch_size, gamma, step_count):
+def train(self, batch_size, gamma, step_count):
+    if len(self.replay_buffer) < batch_size:
+        return
 
-        if len(self.replay_buffer) < batch_size:
-            return  # If not enough experiences
+    # Sampling batch of experiences
+    experiences = random.sample(self.replay_buffer, batch_size)
+    states, actions, rewards, next_states, dones = zip(*experiences)
 
-        # Sampling batch of experiences
-        experiences = random.sample(self.replay_buffer, batch_size)
-        states, actions, rewards, next_states, dones = zip(*experiences)
+    states = torch.stack(states).to(self.device)
+    actions = torch.tensor(actions).to(self.device)
+    rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
+    next_states = torch.stack(next_states).to(self.device)
+    dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
 
-        states = torch.stack(states)
-        actions = torch.tensor(actions)
-        rewards = torch.tensor(rewards, dtype=torch.float32)
-        next_states = torch.stack(next_states)
-        dones = torch.tensor(dones, dtype=torch.float32)
+    q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze()
+    
+    with torch.no_grad():
+        next_q_values = self.target_model(next_states).max(1)[0]
+        target_q_values = rewards + (gamma * next_q_values * (1 - dones))
 
-        # Predicted values    
-        q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze()
+    loss = F.mse_loss(q_values, target_q_values)
 
-        # Target values (with target network)
-        with torch.no_grad():
-            next_q_values = self.target_model(next_states).max(1)[0]
-            target_q_values = rewards + (gamma * next_q_values * (1 - dones))
+    self.optimizer.zero_grad()
+    loss.backward()
+    self.optimizer.step()
+    
+    if self.epsilon > self.epsilon_min:
+        self.epsilon *= self.epsilon_decay
+    
+    if step_count % self.target_update_frequency == 0:
+        self.target_model.load_state_dict(self.model.state_dict())
 
-        # Loss calculation
-        loss = F.mse_loss(q_values, target_q_values)
-
-        # Backpropagation
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        # Update epsilon
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
-
-        # Update periodicaly target network 
-        if step_count % self.target_update_frequency == 0:
-            self.target_model.load_state_dict(self.model.state_dict())
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
@@ -156,7 +150,8 @@ def main(opt):
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     # agent = RandomAgent(env.action_space.n)
-    agent = DQNAgent(env.action_space.n)
+    agent = DQNAgent(env.action_space.n, opt.device)
+
 
     # main loop
     ep_cnt, step_cnt, done = 0, 0, True
