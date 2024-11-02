@@ -31,7 +31,7 @@ class DQNModel(nn.Module):
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2) # (32, 20, 20) -> (64, 9, 9)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)  # (64, 9, 9) -> (64, 7, 7)
 
-        self.fc1 = nn.Linear(64 * 7 * 7, 512)  # Ajuster en fonction de la sortie du dernier Conv2d
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)
         self.fc2 = nn.Linear(512, action_num)
 
     def forward(self, x):
@@ -44,10 +44,9 @@ class DQNModel(nn.Module):
 
 class DQNAgent:
     def __init__(self, action_num):
-        # Hyperparamètres pour l'epsilon-greedy
-        self.epsilon = 1.0           # Valeur initiale d'epsilon
-        self.epsilon_min = 0.1       # Valeur minimale d'epsilon
-        self.epsilon_decay = 0.995   # Facteur de décroissance d'epsilon
+        self.epsilon = 1.0           # Init epsilon value
+        self.epsilon_min = 0.1       # Min epsilon value
+        self.epsilon_decay = 0.995   # Decay factor
 
         self.action_num = action_num
         self.replay_buffer = []
@@ -55,46 +54,47 @@ class DQNAgent:
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
 
     def act(self, state):
-        # Choix de l'action avec epsilon-greedy
+        # Epsilon greedy
         if random.random() < self.epsilon:
-            return random.randint(0, self.action_num - 1)  # Action aléatoire
+            return random.randint(0, self.action_num - 1)
         else:
             with torch.no_grad():
                 q_values = self.model(state)
-                return q_values.argmax().item()  # Action avec la plus grande valeur Q
+                return q_values.argmax().item()
 
     def train(self, batch_size, gamma):
-        if len(self.replay_buffer) < batch_size:
-            return  # Pas assez d'expériences pour entraîner
+        print("Coucou les pd")
 
-        # Échantillonner un batch d'expériences
+        if len(self.replay_buffer) < batch_size:
+            return  # If not enough experiences
+
+        # Sampling batch of experiences
         experiences = random.sample(self.replay_buffer, batch_size)
         states, actions, rewards, next_states, dones = zip(*experiences)
 
-        # Convertir en tensors
         states = torch.stack(states)
         actions = torch.tensor(actions)
         rewards = torch.tensor(rewards, dtype=torch.float32)
         next_states = torch.stack(next_states)
         dones = torch.tensor(dones, dtype=torch.float32)
 
-        # Calculer les valeurs prédites Q pour les états
+        # Predicted values    
         q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze()
 
-        # Calculer les valeurs cibles
+        # Target values
         with torch.no_grad():
             next_q_values = self.model(next_states).max(1)[0]
             target_q_values = rewards + (gamma * next_q_values * (1 - dones))
 
-        # Calculer la perte
+        # Loss calculation
         loss = F.mse_loss(q_values, target_q_values)
 
-        # Rétropropagation
+        # Backpropagation
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        # Décroissance d'epsilon
+        # Update epsilon
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
@@ -146,8 +146,8 @@ def _info(opt):
 
 def main(opt):
     _info(opt)
-    #opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    opt.device = torch.device("cpu")
+    opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # opt.device = torch.device("cpu")
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     # agent = RandomAgent(env.action_space.n)
@@ -161,6 +161,8 @@ def main(opt):
             obs, done = env.reset(), False
         action = agent.act(obs)
         obs, reward, done, info = env.step(action)
+
+        agent.train(batch_size=32, gamma=0.99)
 
         step_cnt += 1
 
