@@ -63,7 +63,6 @@ class DQNAgent:
                 return q_values.argmax().item()
 
     def train(self, batch_size, gamma):
-        print("Coucou les pd")
 
         if len(self.replay_buffer) < batch_size:
             return  # If not enough experiences
