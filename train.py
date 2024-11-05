@@ -1,26 +1,83 @@
 import argparse
 import pickle
 from pathlib import Path
-
 import torch
-
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
 from src.crafter_wrapper import Env
+import torch.nn.functional as F
 
 
-class RandomAgent:
-    """An example Random Agent"""
+# class RandomAgent:
+#     """An example Random Agent"""
 
-    def __init__(self, action_num) -> None:
+#     def __init__(self, action_num) -> None:
+#         self.action_num = action_num
+#         # a uniformly random policy
+#         self.policy = torch.distributions.Categorical(
+#             torch.ones(action_num) / action_num
+#         )
+
+#     def act(self, observation):
+#         """ Since this is a random agent the observation is not used."""
+#         return self.policy.sample().item()
+    
+class PolicyNetwork(nn.Module):
+    def __init__(self, action_num):
+        super(PolicyNetwork, self).__init__()
+        # Couche convolutionnelle pour extraire des caractéristiques
+        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)  # entrée: 4 canaux, sortie: 32 canaux
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)  # entrée: 32 canaux, sortie: 64 canaux
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)  # entrée: 64 canaux, sortie: 64 canaux
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)  # ajustez cette taille en fonction de la sortie des convolutions
+        self.fc2 = nn.Linear(512, action_num)  # sortie: nombre d'actions
+
+    def forward(self, x):
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+        # Passez les observations à travers les couches convolutionnelles
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        
+        # Applatir la sortie pour les couches fully connected
+        x = x.view(x.size(0), -1)  # (batch_size, features)
+        x = F.relu(self.fc1(x))
+        
+        # Utilisez softmax pour obtenir des probabilités
+        action_probs = F.softmax(self.fc2(x), dim=-1)
+        return action_probs
+
+class REINFORCEAgent:
+    def __init__(self, action_num, input_size, lr=0.01):
         self.action_num = action_num
-        # a uniformly random policy
-        self.policy = torch.distributions.Categorical(
-            torch.ones(action_num) / action_num
-        )
+        self.policy_net = PolicyNetwork(action_num)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
     def act(self, observation):
-        """ Since this is a random agent the observation is not used."""
-        return self.policy.sample().item()
+        """Choisir une action en fonction de l'état actuel."""
+        state_tensor = torch.FloatTensor(observation).unsqueeze(0)
+        action_probs = self.policy_net(state_tensor)
+        action = np.random.choice(self.action_num, p=action_probs.detach().numpy()[0])
+        return action
 
+    def update(self, states, actions, rewards, gamma=0.99):
+        """Mettre à jour la politique en fonction des récompenses."""
+        returns = []
+        G = 0
+        for r in reversed(rewards):
+            G = r + gamma * G
+            returns.insert(0, G)
+
+        for state, action, G in zip(states, actions, returns):
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            action_probs = self.policy_net(state_tensor)
+            loss = -torch.log(action_probs[0][action]) * G
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
@@ -68,13 +125,36 @@ def _info(opt):
     )
 
 
+# def main(opt):
+#     _info(opt)
+#     #opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     opt.device = torch.device("cpu")
+#     env = Env("train", opt)
+#     eval_env = Env("eval", opt)
+#     agent = RandomAgent(env.action_space.n)
+
+#     # main loop
+#     ep_cnt, step_cnt, done = 0, 0, True
+#     while step_cnt < opt.steps or not done:
+#         if done:
+#             ep_cnt += 1
+#             obs, done = env.reset(), False
+
+#         action = agent.act(obs)
+#         obs, reward, done, info = env.step(action)
+
+#         step_cnt += 1
+
+#         # evaluate once in a while
+#         if step_cnt % opt.eval_interval == 0:
+#             eval(agent, eval_env, step_cnt, opt)
+
 def main(opt):
     _info(opt)
-    #opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    opt.device = torch.device("cpu")
+    opt.device = torch.device("cpu")  # ou "cuda" si tu as une GPU et que tu veux l'utiliser
     env = Env("train", opt)
     eval_env = Env("eval", opt)
-    agent = RandomAgent(env.action_space.n)
+    agent = REINFORCEAgent(env.action_space.n, opt.history_length * 84 * 84)  # Assurez-vous que la taille de l'entrée est correcte
 
     # main loop
     ep_cnt, step_cnt, done = 0, 0, True
@@ -82,15 +162,25 @@ def main(opt):
         if done:
             ep_cnt += 1
             obs, done = env.reset(), False
+            states, actions, rewards = [], [], []  # Stocker les états, actions et récompenses
 
         action = agent.act(obs)
-        obs, reward, done, info = env.step(action)
+        next_obs, reward, done, info = env.step(action)
 
+        states.append(obs)
+        actions.append(action)
+        rewards.append(reward)
+
+        obs = next_obs
         step_cnt += 1
 
-        # evaluate once in a while
+        # évaluation une fois de temps en temps
         if step_cnt % opt.eval_interval == 0:
             eval(agent, eval_env, step_cnt, opt)
+
+        # Si l'épisode est terminé, mettre à jour la politique
+        if done:
+            agent.update(states, actions, rewards)
 
 
 def get_options():
