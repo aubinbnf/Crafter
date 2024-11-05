@@ -8,7 +8,6 @@ import torch.nn.functional as F
 import numpy as np
 from pathlib import Path
 from PIL import Image
-import datetime
 import json
 
 class GrayScale:
@@ -260,32 +259,15 @@ class CategoricalDQNLearner:
         # Pour suivre epsilon
         self.current_agent = None
         
-    def set_agent(self, agent):
-        """Permet d'associer l'agent au learner pour accéder à epsilon"""
-        self.current_agent = agent
-
-    def save_weights(self):
-        local_path = Path(self.logdir)
-        local_path.mkdir(parents=True, exist_ok=True)
-        torch.save(self.dqn.state_dict(), local_path / "weights.pth")
-        torch.save(self.target_dqn.state_dict(), local_path / "target_weights.pth")
-        print(f"Poids sauvegardés localement dans {local_path}")
-
-    def load_weights(self):
-        weights_path = Path(self.logdir) / "weights.pth"
-        target_weights_path = Path(self.logdir) / "target_weights.pth"
-        if weights_path.exists() and target_weights_path.exists():
-            self.dqn.load_state_dict(torch.load(weights_path))
-            self.target_dqn.load_state_dict(torch.load(target_weights_path))
-            print("Poids chargés depuis", self.logdir)
-        else:
-            print("Aucun poids trouvé. Début de l'entraînement depuis zéro.")
 
     def _soft_update_target_network(self):
         for target_param, param in zip(self.target_dqn.parameters(), self.dqn.parameters()):
             target_param.data.copy_(
                 target_param.data * (1.0 - self.tau) + param.data * self.tau
-            )
+            )    
+    def set_agent(self, agent):
+        """Permet d'associer l'agent au learner pour accéder à epsilon"""
+        self.current_agent = agent
 
     def update(self, batch_size):
         if len(self.buffer) < batch_size:
@@ -343,9 +325,6 @@ class CategoricalDQNLearner:
         if self.update_count % 1000 == 0:
             self.metrics_logger.save_metrics()
 
-        # Update priorities in buffer
-        self.buffer.update_priorities(indices, loss.detach().cpu().numpy())
-
         self.optimizer.zero_grad()
         weighted_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.dqn.parameters(), max_norm=10)
@@ -354,53 +333,15 @@ class CategoricalDQNLearner:
         self._soft_update_target_network()
         self.update_count += 1
 
-    # def save_weights(self):
-    #     torch.save(self.dqn.state_dict(), str(Path(self.logdir) / "weights.pth"))
-    #     torch.save(self.target_dqn.state_dict(), str(Path(self.logdir) / "target_weights.pth"))
-
-    # def load_weights(self):
-    #     weights_path = Path(self.logdir) / "weights.pth"
-    #     target_weights_path = Path(self.logdir) / "target_weights.pth"
-    #     if weights_path.exists() and target_weights_path.exists():
-    #         self.dqn.load_state_dict(torch.load(weights_path))
-    #         self.target_dqn.load_state_dict(torch.load(target_weights_path))
-    #         print("Weights loaded from", self.logdir)
-    #     else:
-    #         print("No weights found. Starting from scratch.")
 class MetricsLogger:
     def __init__(self, log_dir):
         self.log_dir = Path(log_dir)
         self.metrics = {
             # Métriques d'apprentissage
             'loss': [],  # Perte totale
-            'value_loss': [],  # Perte de la fonction de valeur
-            'policy_loss': [],  # Perte de la politique
-            'epsilon': [],  # Taux d'exploration
-            
-            # Métriques de performance
-            'episode_rewards': [],  # Récompenses par épisode
-            'episode_lengths': [],  # Longueur des épisodes
-            'cumulative_reward': [],  # Récompense cumulée
-            'avg_reward_per_step': [],  # Récompense moyenne par étape
-            
-            # Métriques spécifiques à Crafter
-            'items_collected': {},  # Nombre d'items collectés par type
-            'crafting_success_rate': {},  # Taux de réussite de craft par item
-            'survival_time': [],  # Temps de survie par épisode
-            'exploration_ratio': [],  # Ratio de la carte explorée
-            
-            # Métriques de l'agent
             'q_values_mean': [],  # Moyenne des Q-values
-            'q_values_std': [],  # Écart-type des Q-values
-            'action_distribution': {},  # Distribution des actions choisies
-            
-            # Métriques d'optimisation
-            'learning_rate': [],  # Taux d'apprentissage
+            'epsilon': [],  # Taux d'exploration
             'gradient_norm': [],  # Norme du gradient
-            'weight_norm': [],  # Norme des poids
-            
-            # Timestamps
-            'timestamps': [],  # Pour tracer l'évolution temporelle
         }
         self.episode_count = 0
         self.step_count = 0
@@ -408,48 +349,16 @@ class MetricsLogger:
     def log_step(self, step_info):
         """Enregistre les métriques à chaque pas de temps"""
         self.step_count += 1
-        
+
         # Mise à jour des métriques d'apprentissage
         if 'loss' in step_info:
             self.metrics['loss'].append((self.step_count, step_info['loss']))
+        if 'q_values' in step_info:
+            self.metrics['q_values_mean'].append((self.step_count, step_info['q_values']))
         if 'epsilon' in step_info:
             self.metrics['epsilon'].append((self.step_count, step_info['epsilon']))
-            
-        # Mise à jour des Q-values
-        if 'q_values' in step_info:
-            q_values = step_info['q_values']
-            self.metrics['q_values_mean'].append((self.step_count, float(np.mean(q_values))))
-            self.metrics['q_values_std'].append((self.step_count, float(np.std(q_values))))
-            
-        # Distribution des actions
-        if 'action' in step_info:
-            action = step_info['action']
-            self.metrics['action_distribution'][action] = \
-                self.metrics['action_distribution'].get(action, 0) + 1
-
-    def log_episode(self, episode_info):
-        """Enregistre les métriques à la fin de chaque épisode"""
-        self.episode_count += 1
-        
-        # Métriques de performance
-        if 'total_reward' in episode_info:
-            self.metrics['episode_rewards'].append(
-                (self.episode_count, episode_info['total_reward']))
-        if 'length' in episode_info:
-            self.metrics['episode_lengths'].append(
-                (self.episode_count, episode_info['length']))
-            
-        # Métriques Crafter
-        if 'items' in episode_info:
-            for item, count in episode_info['items'].items():
-                if item not in self.metrics['items_collected']:
-                    self.metrics['items_collected'][item] = []
-                self.metrics['items_collected'][item].append(
-                    (self.episode_count, count))
-                    
-        if 'survival_time' in episode_info:
-            self.metrics['survival_time'].append(
-                (self.episode_count, episode_info['survival_time']))
+        if 'gradient_norm' in step_info:
+            self.metrics['gradient_norm'].append((self.step_count, step_info['gradient_norm']))
 
     def save_metrics(self):
         """Sauvegarde les métriques au format JSON"""
@@ -464,8 +373,7 @@ class MetricsLogger:
         # Ajout de métadonnées
         json_metrics['metadata'] = {
             'total_episodes': self.episode_count,
-            'total_steps': self.step_count,
-            'timestamp': str(datetime.datetime.now()),
+            'total_steps': self.step_count,           
         }
         
         # Sauvegarde

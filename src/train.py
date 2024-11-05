@@ -86,7 +86,7 @@ def main(opt):
     )
     
     # Load weights if available
-    learner.load_weights()
+    # learner.load_weights()
 
     # Initialize agent with slower epsilon decay for better exploration
     agent = Agent(

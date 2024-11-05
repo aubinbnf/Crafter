@@ -1,0 +1,30 @@
+{
+  "loss": [
+    [
+      1,
+      3.9303107261657715
+    ]
+  ],
+  "q_values_mean": [
+    [
+      1,
+      0.1629229485988617
+    ]
+  ],
+  "epsilon": [
+    [
+      1,
+      1.0
+    ]
+  ],
+  "gradient_norm": [
+    [
+      1,
+      0.0
+    ]
+  ],
+  "metadata": {
+    "total_episodes": 0,
+    "total_steps": 1
+  }
+}
