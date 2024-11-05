@@ -21,11 +21,25 @@ def _save_stats(episodic_returns, crt_step, path, drive_path=None):
     with open(path / "eval_stats.pkl", "ab") as f:
         pickle.dump({"step": crt_step, "avg_return": avg_return}, f)
 
-    # Sauvegarde sur Google Drive
+    # Sauvegarde des stats sur Google Drive
     if drive_path:
         drive_path.mkdir(parents=True, exist_ok=True)
+        # Copie du fichier eval_stats.pkl
         shutil.copy(path / "eval_stats.pkl", drive_path / "eval_stats.pkl")
-        print(f"Fichier sauvegardé dans Google Drive : {drive_path / 'eval_stats.pkl'}")
+        
+        # Copie du fichier stats.jsonl s'il existe
+        stats_path = Path(path).parent / "random_agent/0/stats.jsonl"
+        if stats_path.exists():            
+            drive_path.mkdir(parents=True, exist_ok=True)
+            shutil.copy(path / "stats.jsonl", drive_path / "stats.jsonl")
+            print(f"Fichier stats.jsonl sauvegardé dans Google Drive")
+
+        # Copie du fichier training_metrics.json s'il existe
+        training_metrics_path = Path(path).parent / "random_agent/0/training_metrics.json"
+        if training_metrics_path.exists():            
+            drive_path.mkdir(parents=True, exist_ok=True)
+            shutil.copy(path / "training_metrics.json", drive_path / "training_metrics.json")
+            print(f"Fichier training_metrics.json sauvegardé dans Google Drive")
 
 def eval(agent, env, crt_step, opt, drive_path=None):
     episodic_returns = []
@@ -39,8 +53,9 @@ def eval(agent, env, crt_step, opt, drive_path=None):
     _save_stats(episodic_returns, crt_step, Path(opt.logdir), drive_path)
 
 def main(opt):
-    # Chemin Google Drive
+    # Chemin Google Drive pour les stats uniquement
     drive_path = Path("/content/drive/MyDrive/your_project_folder/random_agent/0")
+    drive_path.mkdir(parents=True, exist_ok=True)
     
     Path(opt.logdir).mkdir(parents=True, exist_ok=True)
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -67,7 +82,7 @@ def main(opt):
     learner = CategoricalDQNLearner(
         dqn, target_dqn, action_space, buffer, opt.device, opt.logdir,
         gamma=opt.gamma, lr=opt.lr, Vmin=opt.Vmin, Vmax=opt.Vmax, atoms=opt.atoms,
-        target_update_freq=opt.target_update_freq, tau=0.005, drive_folder="/content/drive/MyDrive/your_project_folder/weights"
+        target_update_freq=opt.target_update_freq, tau=0.005
     )
     
     # Load weights if available
@@ -111,13 +126,32 @@ def main(opt):
             # Periodic evaluation
             if total_steps % opt.eval_interval == 0:
                 eval(agent, eval_env, total_steps, opt, drive_path)
-                learner.save_weights()
-                shutil.copy(opt.logdir / "weights.pt", drive_path / "weights.pt")
-                print(f"Poids sauvegardés dans Google Drive : {drive_path / 'weights.pt'}")
 
-        # Log episode end details every 10 episodes
+        # Log episode end details and save stats every 10 episodes
         if episode % 10 == 0:
             print(f"Episode {episode}, Steps: {total_steps}, Reward: {episode_reward:.2f}, Epsilon: {agent.epsilon:.3f}")
+            
+            # Sauvegarde des stats sur Google Drive
+            stats_path = Path(opt.logdir).parent / "random_agent/0/stats.jsonl"
+            if stats_path.exists():
+                drive_stats_path = drive_path.parent / "random_agent/0"
+                drive_stats_path.mkdir(parents=True, exist_ok=True)
+                shutil.copy(stats_path, drive_stats_path / "stats.jsonl")
+                print(f"stats.jsonl sauvegardé dans Drive : {drive_stats_path / 'stats.jsonl'}")
+
+            # Sauvegarde du training_metrics.json
+            training_metrics_path = Path(opt.logdir).parent / "random_agent/0/training_metrics.json"
+            if training_metrics_path.exists():
+                drive_training_metrics_path = drive_path.parent / "random_agent/0"
+                drive_training_metrics_path.mkdir(parents=True, exist_ok=True)
+                shutil.copy(training_metrics_path, drive_training_metrics_path / "training_metrics.json")
+                print(f"training_metrics.json sauvegardé dans Drive : {drive_training_metrics_path / 'training_metrics.json'}")
+
+            # Sauvegarde de eval_stats.pkl
+            eval_stats_path = Path(opt.logdir) / "eval_stats.pkl"
+            if eval_stats_path.exists():
+                shutil.copy(eval_stats_path, drive_path / "eval_stats.pkl")
+                print(f"eval_stats.pkl sauvegardé dans Drive : {drive_path / 'eval_stats.pkl'}")
 
 def get_options():
     parser = argparse.ArgumentParser()
