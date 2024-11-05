@@ -5,41 +5,37 @@ import torch
 from crafter_wrapper import Env
 from dqn_agent import (DuelingCategoricalDQN, CategoricalDQNLearner, 
                       Agent, PrioritizedReplayBuffer)
-import json
 import shutil
-from pathlib import Path
 
-def _save_stats(episodic_returns, crt_step, path, drive_path=None):
+def save_file(source_path, dest_path, file_name):
+    """Helper function to save a file both locally and on Google Drive."""
+    source_file = source_path / file_name
+    dest_file = dest_path / file_name
+    if source_file.exists():
+        shutil.copy(source_file, dest_file)
+        print(f"{file_name} sauvegardé dans {dest_file}")
+
+def save_stats(episodic_returns, crt_step, logdir, drive_path=None):
+    """Save evaluation statistics locally and on Google Drive."""
+    logdir = Path(logdir)
+    drive_path = Path(drive_path) if drive_path else None
+
+    # Calcul et affichage des résultats
     episodic_returns = torch.tensor(episodic_returns)
     avg_return = episodic_returns.mean().item()
-    print(
-        "[{:06d}] eval results: R/ep={:03.2f}, std={:03.2f}.".format(
-            crt_step, avg_return, episodic_returns.std().item()
-        )
-    )
-    # Sauvegarde locale
-    with open(path / "eval_stats.pkl", "ab") as f:
+    std_return = episodic_returns.std().item()
+    print(f"[{crt_step:06d}] Résultats d'évaluation: R/ep={avg_return:.2f}, std={std_return:.2f}")
+
+    # Sauvegarde locale des statistiques d'évaluation
+    eval_stats_path = logdir / "eval_stats.pkl"
+    with open(eval_stats_path, "ab") as f:
         pickle.dump({"step": crt_step, "avg_return": avg_return}, f)
 
-    # Sauvegarde des stats sur Google Drive
+    # Sauvegarde sur Google Drive si spécifié
     if drive_path:
-        drive_path.mkdir(parents=True, exist_ok=True)
-        # Copie du fichier eval_stats.pkl
-        shutil.copy(path / "eval_stats.pkl", drive_path / "eval_stats.pkl")
-        
-        # Copie du fichier stats.jsonl s'il existe
-        stats_path = Path(path).parent / "random_agent/0/stats.jsonl"
-        if stats_path.exists():            
-            drive_path.mkdir(parents=True, exist_ok=True)
-            shutil.copy(path / "stats.jsonl", drive_path / "stats.jsonl")
-            print(f"Fichier stats.jsonl sauvegardé dans Google Drive")
-
-        # Copie du fichier training_metrics.json s'il existe
-        training_metrics_path = Path(path).parent / "random_agent/0/training_metrics.json"
-        if training_metrics_path.exists():            
-            drive_path.mkdir(parents=True, exist_ok=True)
-            shutil.copy(path / "training_metrics.json", drive_path / "training_metrics.json")
-            print(f"Fichier training_metrics.json sauvegardé dans Google Drive")
+        save_file(logdir, drive_path, "eval_stats.pkl")
+        save_file(logdir, drive_path, "stats.jsonl")
+        save_file(logdir, drive_path, "training_metrics.json")
 
 def eval(agent, env, crt_step, opt, drive_path=None):
     episodic_returns = []
@@ -50,27 +46,25 @@ def eval(agent, env, crt_step, opt, drive_path=None):
             action = agent.act(obs.to(opt.device), evaluate=True)
             obs, reward, done, info = env.step(action)
             episodic_returns[-1] += reward
-    _save_stats(episodic_returns, crt_step, Path(opt.logdir), drive_path)
+    save_stats(episodic_returns, crt_step, opt.logdir, drive_path)
 
 def main(opt):
-    # Chemin Google Drive pour les stats uniquement
     drive_path = Path("/content/drive/MyDrive/your_project_folder/random_agent/0")
     drive_path.mkdir(parents=True, exist_ok=True)
-    
+
     Path(opt.logdir).mkdir(parents=True, exist_ok=True)
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {opt.device}")
-    
-    # Initialize environments
+
+    # Initialisation des environnements et paramètres
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     action_space = env.action_space.n
 
-    # Initialize networks and learner with soft target update
     dqn = DuelingCategoricalDQN(action_space, opt.device, 
                                 atoms=opt.atoms, 
                                 Vmin=opt.Vmin, 
-                                Vmax=opt.Vmax,).to(opt.device)
+                                Vmax=opt.Vmax).to(opt.device)
     
     target_dqn = DuelingCategoricalDQN(action_space, opt.device,
                                        atoms=opt.atoms,
@@ -84,11 +78,7 @@ def main(opt):
         gamma=opt.gamma, lr=opt.lr, Vmin=opt.Vmin, Vmax=opt.Vmax, atoms=opt.atoms,
         target_update_freq=opt.target_update_freq, tau=0.005
     )
-    
-    # Load weights if available
-    # learner.load_weights()
 
-    # Initialize agent with slower epsilon decay for better exploration
     agent = Agent(
         dqn, action_space,
         epsilon=1.0, 
@@ -98,7 +88,7 @@ def main(opt):
 
     total_steps = 0
     episode = 0
-    
+
     while total_steps < opt.steps:
         episode += 1
         obs, done = env.reset(), False
@@ -108,7 +98,6 @@ def main(opt):
         while not done:
             action = agent.act(obs.to(opt.device))
             next_obs, reward, done, info = env.step(action)
-            
             buffer.add(obs, action, reward, next_obs, done)
             
             obs = next_obs
@@ -116,42 +105,20 @@ def main(opt):
             episode_steps += 1
             total_steps += 1
 
-            # Update the network
             if len(buffer) >= opt.batch_size:
                 learner.update(opt.batch_size)
 
-            # Update exploration rate
             agent.update_epsilon()
 
-            # Periodic evaluation
             if total_steps % opt.eval_interval == 0:
                 eval(agent, eval_env, total_steps, opt, drive_path)
 
-        # Log episode end details and save stats every 10 episodes
         if episode % 10 == 0:
             print(f"Episode {episode}, Steps: {total_steps}, Reward: {episode_reward:.2f}, Epsilon: {agent.epsilon:.3f}")
-            
-            # Sauvegarde des stats sur Google Drive
-            stats_path = Path(opt.logdir).parent / "random_agent/0/stats.jsonl"
-            if stats_path.exists():
-                drive_stats_path = drive_path.parent / "random_agent/0"
-                drive_stats_path.mkdir(parents=True, exist_ok=True)
-                shutil.copy(stats_path, drive_stats_path / "stats.jsonl")
-                print(f"stats.jsonl sauvegardé dans Drive : {drive_stats_path / 'stats.jsonl'}")
 
-            # Sauvegarde du training_metrics.json
-            training_metrics_path = Path(opt.logdir).parent / "random_agent/0/training_metrics.json"
-            if training_metrics_path.exists():
-                drive_training_metrics_path = drive_path.parent / "random_agent/0"
-                drive_training_metrics_path.mkdir(parents=True, exist_ok=True)
-                shutil.copy(training_metrics_path, drive_training_metrics_path / "training_metrics.json")
-                print(f"training_metrics.json sauvegardé dans Drive : {drive_training_metrics_path / 'training_metrics.json'}")
-
-            # Sauvegarde de eval_stats.pkl
-            eval_stats_path = Path(opt.logdir) / "eval_stats.pkl"
-            if eval_stats_path.exists():
-                shutil.copy(eval_stats_path, drive_path / "eval_stats.pkl")
-                print(f"eval_stats.pkl sauvegardé dans Drive : {drive_path / 'eval_stats.pkl'}")
+            save_file(Path(opt.logdir), drive_path, "stats.jsonl")
+            save_file(Path(opt.logdir), drive_path, "training_metrics.json")
+            save_file(Path(opt.logdir), drive_path, "eval_stats.pkl")
 
 def get_options():
     parser = argparse.ArgumentParser()
