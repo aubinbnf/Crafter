@@ -43,7 +43,11 @@ class REINFORCEAgent:
 
     def act(self, observation):
         """Choisir une action en fonction de l'état actuel."""
-        state_tensor = torch.FloatTensor(observation).unsqueeze(0).to(self.device)
+        if observation.device != self.device:
+            state_tensor = torch.FloatTensor(observation).unsqueeze(0).to(self.device)
+        else:
+            state_tensor = torch.FloatTensor(observation).unsqueeze(0)
+
         action_probs = self.policy_net(state_tensor)
         action = np.random.choice(self.action_num, p=action_probs.detach().numpy()[0])
         return action
