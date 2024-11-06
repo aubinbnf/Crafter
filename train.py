@@ -35,14 +35,15 @@ class PolicyNetwork(nn.Module):
         return action_probs
 
 class REINFORCEAgent:
-    def __init__(self, action_num, input_size, lr=0.01):
+    def __init__(self, action_num, input_size, device, lr=0.01):
+        self.device = device
         self.action_num = action_num
-        self.policy_net = PolicyNetwork(action_num)
+        self.policy_net = PolicyNetwork(action_num).to(self.device)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
     def act(self, observation):
         """Choisir une action en fonction de l'état actuel."""
-        state_tensor = torch.FloatTensor(observation).unsqueeze(0)
+        state_tensor = torch.FloatTensor(observation).unsqueeze(0).to(self.device)
         action_probs = self.policy_net(state_tensor)
         action = np.random.choice(self.action_num, p=action_probs.detach().numpy()[0])
         return action
@@ -56,7 +57,7 @@ class REINFORCEAgent:
             returns.insert(0, G)
 
         for state, action, G in zip(states, actions, returns):
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             action_probs = self.policy_net(state_tensor)
             loss = -torch.log(action_probs[0][action]) * G
 
@@ -115,7 +116,7 @@ def main(opt):
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = Env("train", opt)
     eval_env = Env("eval", opt)
-    agent = REINFORCEAgent(env.action_space.n, opt.history_length * 84 * 84)  # Assurez-vous que la taille de l'entrée est correcte
+    agent = REINFORCEAgent(env.action_space.n, opt.history_length * 84 * 84, opt.device)  # Assurez-vous que la taille de l'entrée est correcte
 
     # main loop
     ep_cnt, step_cnt, done = 0, 0, True
