@@ -7,21 +7,6 @@ import torch.optim as optim
 import numpy as np
 from src.crafter_wrapper import Env
 import torch.nn.functional as F
-
-
-# class RandomAgent:
-#     """An example Random Agent"""
-
-#     def __init__(self, action_num) -> None:
-#         self.action_num = action_num
-#         # a uniformly random policy
-#         self.policy = torch.distributions.Categorical(
-#             torch.ones(action_num) / action_num
-#         )
-
-#     def act(self, observation):
-#         """ Since this is a random agent the observation is not used."""
-#         return self.policy.sample().item()
     
 class PolicyNetwork(nn.Module):
     def __init__(self, action_num):
@@ -125,33 +110,9 @@ def _info(opt):
     )
 
 
-# def main(opt):
-#     _info(opt)
-#     #opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     opt.device = torch.device("cpu")
-#     env = Env("train", opt)
-#     eval_env = Env("eval", opt)
-#     agent = RandomAgent(env.action_space.n)
-
-#     # main loop
-#     ep_cnt, step_cnt, done = 0, 0, True
-#     while step_cnt < opt.steps or not done:
-#         if done:
-#             ep_cnt += 1
-#             obs, done = env.reset(), False
-
-#         action = agent.act(obs)
-#         obs, reward, done, info = env.step(action)
-
-#         step_cnt += 1
-
-#         # evaluate once in a while
-#         if step_cnt % opt.eval_interval == 0:
-#             eval(agent, eval_env, step_cnt, opt)
-
 def main(opt):
     _info(opt)
-    opt.device = torch.device("cpu")  # ou "cuda" si tu as une GPU et que tu veux l'utiliser
+    opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     agent = REINFORCEAgent(env.action_space.n, opt.history_length * 84 * 84)  # Assurez-vous que la taille de l'entrée est correcte
