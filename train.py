@@ -7,6 +7,7 @@ import torch.optim as optim
 import numpy as np
 from src.crafter_wrapper import Env
 import torch.nn.functional as F
+import json
     
 class PolicyNetwork(nn.Module):
     def __init__(self, action_num):
@@ -59,15 +60,39 @@ class REINFORCEAgent:
             G = r + gamma * G
             returns.insert(0, G)
 
+        losses = []
+        rewards_collected = []
+
         for state, action, G in zip(states, actions, returns):
             # state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
             state_tensor = state.unsqueeze(0).to(self.device)
             action_probs = self.policy_net(state_tensor)
             loss = -torch.log(action_probs[0][action]) * G
 
+            losses.append(loss.item())
+            rewards_collected.append(G)
+
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+
+        stats = {
+        "losses": losses,
+        "rewards": rewards_collected
+        }
+
+        stats_file = "training_stats.json"
+        if Path(stats_file).exists():
+            with open(stats_file, 'r') as f:
+                all_stats = json.load(f)
+        else:
+            all_stats = []
+
+        all_stats.append(stats)
+
+        # Sauvegarder dans le fichier
+        with open(stats_file, 'w') as f:
+            json.dump(all_stats, f, indent=4)
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
