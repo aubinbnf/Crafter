@@ -33,6 +33,7 @@ class Env:
     def reset(self):
         for _ in range(self.window):
             self.state_buffer.append(torch.zeros(84, 84, device=self.device))
+        
         obs = self.env.reset()
         obs = torch.tensor(obs, dtype=torch.float32, device=self.device).div_(255)
         self.state_buffer.append(obs)

@@ -41,15 +41,17 @@ class REINFORCEAgent:
         self.policy_net = PolicyNetwork(action_num).to(self.device)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
-    def act(self, observation):
+    def act(self, obs):
         """Choisir une action en fonction de l'état actuel."""
-        if observation.device != self.device:
-            state_tensor = torch.FloatTensor(observation).unsqueeze(0).to(self.device)
-        else:
-            state_tensor = torch.FloatTensor(observation).unsqueeze(0)
+        state_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         action_probs = self.policy_net(state_tensor)
+
+        if torch.isnan(action_probs).any():
+            raise ValueError("Les probabilités d'action contiennent des NaN.")  
+        
         action = np.random.choice(self.action_num, p=action_probs.detach().numpy()[0])
+
         return action
 
     def update(self, states, actions, rewards, gamma=0.99):
@@ -127,8 +129,9 @@ def main(opt):
     while step_cnt < opt.steps or not done:
         if done:
             ep_cnt += 1
+            # obs = torch.Size([4, 84, 84])
             obs, done = env.reset(), False
-            states, actions, rewards = [], [], []  # Stocker les états, actions et récompenses
+            states, actions, rewards = [], [], []  
 
         action = agent.act(obs)
         next_obs, reward, done, info = env.step(action)
