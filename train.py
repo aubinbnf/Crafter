@@ -12,26 +12,20 @@ import json
 class PolicyNetwork(nn.Module):
     def __init__(self, action_num):
         super(PolicyNetwork, self).__init__()
-        # Couche convolutionnelle pour extraire des caractéristiques
-        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)  # entrée: 4 canaux, sortie: 32 canaux
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)  # entrée: 32 canaux, sortie: 64 canaux
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)  # entrée: 64 canaux, sortie: 64 canaux
-        self.fc1 = nn.Linear(64 * 7 * 7, 512)  # ajustez cette taille en fonction de la sortie des convolutions
-        self.fc2 = nn.Linear(512, action_num)  # sortie: nombre d'actions
+        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)
+        self.fc2 = nn.Linear(512, action_num)
 
     def forward(self, x):
-        if x.dim() == 3:
-            x = x.unsqueeze(0)
-        # Passez les observations à travers les couches convolutionnelles
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
-        
-        # Applatir la sortie pour les couches fully connected
-        x = x.view(x.size(0), -1)  # (batch_size, features)
+
+        x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
-        
-        # Utilisez softmax pour obtenir des probabilités
+
         action_probs = F.softmax(self.fc2(x), dim=-1)
         return action_probs
 
@@ -45,10 +39,8 @@ class REINFORCEAgent:
     def act(self, obs):
         """Choisir une action en fonction de l'état actuel."""
         state_tensor = obs.unsqueeze(0).to(self.device)
-        
         action_probs = self.policy_net(state_tensor)
-
-        action = torch.multinomial(action_probs, 1)  # Tire une action selon les probabilités
+        action = torch.multinomial(action_probs, 1)  
         action = action.item()
         return action
 
@@ -64,7 +56,6 @@ class REINFORCEAgent:
         rewards_collected = []
 
         for state, action, G in zip(states, actions, returns):
-            # state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
             state_tensor = state.unsqueeze(0).to(self.device)
             action_probs = self.policy_net(state_tensor)
             loss = -torch.log(action_probs[0][action]) * G
@@ -145,7 +136,7 @@ def main(opt):
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = Env("train", opt)
     eval_env = Env("eval", opt)
-    agent = REINFORCEAgent(env.action_space.n, opt.history_length * 84 * 84, opt.device)  # Assurez-vous que la taille de l'entrée est correcte
+    agent = REINFORCEAgent(env.action_space.n, opt.history_length * 84 * 84, opt.device) 
 
     # main loop
     ep_cnt, step_cnt, done = 0, 0, True
