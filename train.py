@@ -43,13 +43,10 @@ class REINFORCEAgent:
 
     def act(self, obs):
         """Choisir une action en fonction de l'état actuel."""
-        state_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0).div_(255)
-
+        state_tensor = obs.unsqueeze(0).to(self.device)
+        
         action_probs = self.policy_net(state_tensor)
 
-        if torch.isnan(action_probs).any():
-            raise ValueError("Les probabilités d'action contiennent des NaN.")  
-        
         action = torch.multinomial(action_probs, 1)  # Tire une action selon les probabilités
         action = action.item()
         return action
@@ -63,7 +60,8 @@ class REINFORCEAgent:
             returns.insert(0, G)
 
         for state, action, G in zip(states, actions, returns):
-            state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+            # state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+            state_tensor = state.unsqueeze(0).to(self.device)
             action_probs = self.policy_net(state_tensor)
             loss = -torch.log(action_probs[0][action]) * G
 
