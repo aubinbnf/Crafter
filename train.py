@@ -1,26 +1,46 @@
 import argparse
 import pickle
 from pathlib import Path
-from agent import DQNAgent
 import torch
-
+import torch.nn as nn
+import torch.optim as optim
+import random
+import numpy as np
+from collections import deque
 from src.crafter_wrapper import Env
 
 
-class RandomAgent:
-    """An example Random Agent"""
+class DQN(nn.Module):
+    def __init__(self, action_num):
+        super(DQN, self).__init__()
+        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)
+        self.fc2 = nn.Linear(512, action_num)
 
-    def __init__(self, action_num) -> None:
+    def forward(self, x):
+        x = torch.relu(self.conv1(x))
+        x = torch.relu(self.conv2(x))
+        x = torch.relu(self.conv3(x))
+        x = x.view(x.size(0), -1)
+        x = torch.relu(self.fc1(x))
+        return self.fc2(x)
+
+class DQNAgent:
+    def __init__(self, action_num, device, gamma=0.99, lr=0.00025):
         self.action_num = action_num
-        # a uniformly random policy
-        self.policy = torch.distributions.Categorical(
-            torch.ones(action_num) / action_num
-        )
+        self.device = device
+        self.gamma = gamma
+        self.model = DQN(action_num).to(device)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
-    def act(self, observation):
-        """ Since this is a random agent the observation is not used."""
-        return self.policy.sample().item()
-
+    def act(self, state):
+        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        with torch.no_grad():  # Désactivation du calcul des gradients
+            q_values = self.model(state)
+        return torch.argmax(q_values, dim=1).item()
+    
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
@@ -67,31 +87,6 @@ def _info(opt):
         + "with values between 0 and 1."
     )
 
-
-# def main(opt):
-#     _info(opt)
-#     #opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     opt.device = torch.device("cpu")
-#     env = Env("train", opt)
-#     eval_env = Env("eval", opt)
-#     agent = RandomAgent(env.action_space.n)
-
-#     # main loop
-#     ep_cnt, step_cnt, done = 0, 0, True
-#     while step_cnt < opt.steps or not done:
-#         if done:
-#             ep_cnt += 1
-#             obs, done = env.reset(), False
-
-#         action = agent.act(obs)
-#         obs, reward, done, info = env.step(action)
-
-#         step_cnt += 1
-
-#         # evaluate once in a while
-#         if step_cnt % opt.eval_interval == 0:
-#             eval(agent, eval_env, step_cnt, opt)
-
 def main(opt):
     _info(opt)
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -107,16 +102,12 @@ def main(opt):
 
         action = agent.act(obs)
         next_obs, reward, done, info = env.step(action)
-        agent.remember(obs, action, reward, next_obs, done)
-        agent.replay()
 
         obs = next_obs
         step_cnt += 1
 
         if step_cnt % opt.eval_interval == 0:
             eval(agent, eval_env, step_cnt, opt)
-            agent.update_target_net()
-
 
 
 def get_options():
