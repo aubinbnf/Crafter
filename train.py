@@ -36,7 +36,7 @@ class DQNAgent:
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
     def act(self, state):
-        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        state = state.unsqueeze(0).to(self.device)
         with torch.no_grad():  # Désactivation du calcul des gradients
             q_values = self.model(state)
         return torch.argmax(q_values, dim=1).item()
