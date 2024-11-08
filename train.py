@@ -32,14 +32,26 @@ class DQNAgent:
         self.action_num = action_num
         self.device = device
         self.gamma = gamma
+        self.epsilon = 1.0
+        self.epsilon_min = 0.1
+        self.epsilon_decay = 0.995
         self.model = DQN(action_num).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
     def act(self, state):
-        state = state.unsqueeze(0).to(self.device)
-        with torch.no_grad():  # Désactivation du calcul des gradients
-            q_values = self.model(state)
-        return torch.argmax(q_values, dim=1).item()
+        # Exploration
+        if random.random() < self.epsilon:
+            action = random.randint(0, self.action_num - 1)
+        else :
+            # Exploitation
+            state = state.unsqueeze(0).to(self.device)
+            with torch.no_grad():  # Désactivation du calcul des gradients
+                q_values = self.model(state)
+            action = torch.argmax(q_values, dim=1).item()
+
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
+        return action
     
 
 def _save_stats(episodic_returns, crt_step, path):
@@ -90,6 +102,7 @@ def _info(opt):
 def main(opt):
     _info(opt)
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"The code runs on : {opt.device}")
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     agent = DQNAgent(env.action_space.n, opt.device)
