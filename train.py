@@ -8,6 +8,7 @@ import random
 import numpy as np
 from collections import deque
 from src.crafter_wrapper import Env
+import json
 
 
 class DQN(nn.Module):
@@ -39,6 +40,7 @@ class DQNAgent:
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.memory = deque(maxlen=10000)
         self.batch_size = 32
+        self.episode_loss = []
 
     def store_experience(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
@@ -53,7 +55,7 @@ class DQNAgent:
         else :
             # Exploitation
             state = state.unsqueeze(0).to(self.device)
-            with torch.no_grad():  # Désactivation du calcul des gradients
+            with torch.no_grad():  
                 q_values = self.model(state)
             action = torch.argmax(q_values, dim=1).item()
 
@@ -62,35 +64,40 @@ class DQNAgent:
         return action
     
     def train(self):
-        """Entraîne le modèle en utilisant un mini-lot échantillonné de la mémoire"""
+        """Trains the model using a mini-batch sampled from memory"""
         if len(self.memory) < self.batch_size:
-            return  # Ne pas entraîner tant que la mémoire n'a pas assez d'expériences
+            return  # If the memory has not enough experiences
         
-        # Échantillonnage du mini-lot
         batch = self.sample_memory()
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        # Convertir en tenseurs PyTorch
         states = torch.stack(states).to(self.device)
         actions = torch.tensor(actions).to(self.device)
         rewards = torch.tensor(rewards).to(self.device)
         next_states = torch.stack(next_states).to(self.device)
         dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
 
-        # Calcul des Q-valeurs pour les états actuels et suivants
         q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
         next_q_values = self.model(next_states).max(1)[0]
         
-        # Calcul des cibles pour les Q-valeurs
+        # targets for Q-values
         targets = rewards + self.gamma * next_q_values * (1 - dones)
         
-        # Calcul de la perte
+        # loss
         loss = nn.functional.mse_loss(q_values, targets)
-        
-        # Optimisation
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        self.episode_loss.append(loss.item())
+
+    def end_episode(self):
+        if self.episode_loss:
+            avg_loss = sum(self.episode_loss) / len(self.episode_loss)
+            self.episode_loss = []
+            return avg_loss
+        return None
+
     
 
 def _save_stats(episodic_returns, crt_step, path):
@@ -148,25 +155,47 @@ def main(opt):
     agent = DQNAgent(env.action_space.n, opt.device)
 
     ep_cnt, step_cnt, done = 0, 0, True
+    episode_rewards, episode_steps = 0, 0
+    statistics = {
+        "episode_rewards": [],
+        "episode_steps": [],
+        "epsilon": [],
+        "loss_per_episode": [],
+        "eval_rewards": []
+    }
+
     while step_cnt < opt.steps or not done:
         if done:
+            statistics["episode_rewards"].append(episode_rewards)
+            statistics["episode_steps"].append(episode_steps)
+            statistics["epsilon"].append(agent.epsilon)
+
             ep_cnt += 1
+            episode_rewards, episode_steps = 0, 0
             obs, done = env.reset(), False
+
+            avg_loss = agent.end_episode()
+            if avg_loss is not None:
+                statistics["loss_per_episode"].append(avg_loss)
 
         action = agent.act(obs)
         next_obs, reward, done, info = env.step(action)
 
-        # Stockage de l'expérience dans la mémoire
+        episode_rewards += reward
+        episode_steps += 1
+
         agent.store_experience(obs, action, reward, next_obs, done)
-        
-        # Entraînement de l'agent
         agent.train()
 
         obs = next_obs
         step_cnt += 1
 
         if step_cnt % opt.eval_interval == 0:
-            eval(agent, eval_env, step_cnt, opt)
+            eval_reward = eval(agent, eval_env, step_cnt, opt)
+            statistics["eval_rewards"].append(eval_reward)
+    
+    with open("training_statistics.json", "w") as f:
+        json.dump(statistics, f, indent=4)
 
 
 def get_options():
