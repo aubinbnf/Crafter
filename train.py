@@ -37,6 +37,14 @@ class DQNAgent:
         self.epsilon_decay = 0.995
         self.model = DQN(action_num).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        self.memory = deque(maxlen=10000)
+        self.batch_size = 32
+
+    def store_experience(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+
+    def sample_memory(self):
+        return random.sample(self.memory, self.batch_size)
 
     def act(self, state):
         # Exploration
@@ -99,6 +107,38 @@ def _info(opt):
         + "with values between 0 and 1."
     )
 
+def train(self):
+    """Entraîne le modèle en utilisant un mini-lot échantillonné de la mémoire"""
+    if len(self.memory) < self.batch_size:
+        return  # Ne pas entraîner tant que la mémoire n'a pas assez d'expériences
+    
+    # Échantillonnage du mini-lot
+    batch = self.sample_memory()
+    states, actions, rewards, next_states, dones = zip(*batch)
+
+    # Convertir en tenseurs PyTorch
+    states = torch.stack(states).to(self.device)
+    actions = torch.tensor(actions).to(self.device)
+    rewards = torch.tensor(rewards).to(self.device)
+    next_states = torch.stack(next_states).to(self.device)
+    dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
+
+    # Calcul des Q-valeurs pour les états actuels et suivants
+    q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+    next_q_values = self.model(next_states).max(1)[0]
+    
+    # Calcul des cibles pour les Q-valeurs
+    targets = rewards + self.gamma * next_q_values * (1 - dones)
+    
+    # Calcul de la perte
+    loss = nn.functional.mse_loss(q_values, targets)
+    
+    # Optimisation
+    self.optimizer.zero_grad()
+    loss.backward()
+    self.optimizer.step()
+
+
 def main(opt):
     _info(opt)
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -115,6 +155,12 @@ def main(opt):
 
         action = agent.act(obs)
         next_obs, reward, done, info = env.step(action)
+
+        # Stockage de l'expérience dans la mémoire
+        agent.store_experience(obs, action, reward, next_obs, done)
+        
+        # Entraînement de l'agent
+        agent.train()
 
         obs = next_obs
         step_cnt += 1
