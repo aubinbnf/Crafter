@@ -61,6 +61,37 @@ class DQNAgent:
 
         return action
     
+    def train(self):
+        """Entraîne le modèle en utilisant un mini-lot échantillonné de la mémoire"""
+        if len(self.memory) < self.batch_size:
+            return  # Ne pas entraîner tant que la mémoire n'a pas assez d'expériences
+        
+        # Échantillonnage du mini-lot
+        batch = self.sample_memory()
+        states, actions, rewards, next_states, dones = zip(*batch)
+
+        # Convertir en tenseurs PyTorch
+        states = torch.stack(states).to(self.device)
+        actions = torch.tensor(actions).to(self.device)
+        rewards = torch.tensor(rewards).to(self.device)
+        next_states = torch.stack(next_states).to(self.device)
+        dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
+
+        # Calcul des Q-valeurs pour les états actuels et suivants
+        q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+        next_q_values = self.model(next_states).max(1)[0]
+        
+        # Calcul des cibles pour les Q-valeurs
+        targets = rewards + self.gamma * next_q_values * (1 - dones)
+        
+        # Calcul de la perte
+        loss = nn.functional.mse_loss(q_values, targets)
+        
+        # Optimisation
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+    
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
@@ -106,37 +137,6 @@ def _info(opt):
         f"Observations are of dims ({opt.history_length},84,84),"
         + "with values between 0 and 1."
     )
-
-def train(self):
-    """Entraîne le modèle en utilisant un mini-lot échantillonné de la mémoire"""
-    if len(self.memory) < self.batch_size:
-        return  # Ne pas entraîner tant que la mémoire n'a pas assez d'expériences
-    
-    # Échantillonnage du mini-lot
-    batch = self.sample_memory()
-    states, actions, rewards, next_states, dones = zip(*batch)
-
-    # Convertir en tenseurs PyTorch
-    states = torch.stack(states).to(self.device)
-    actions = torch.tensor(actions).to(self.device)
-    rewards = torch.tensor(rewards).to(self.device)
-    next_states = torch.stack(next_states).to(self.device)
-    dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
-
-    # Calcul des Q-valeurs pour les états actuels et suivants
-    q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
-    next_q_values = self.model(next_states).max(1)[0]
-    
-    # Calcul des cibles pour les Q-valeurs
-    targets = rewards + self.gamma * next_q_values * (1 - dones)
-    
-    # Calcul de la perte
-    loss = nn.functional.mse_loss(q_values, targets)
-    
-    # Optimisation
-    self.optimizer.zero_grad()
-    loss.backward()
-    self.optimizer.step()
 
 
 def main(opt):
