@@ -147,6 +147,13 @@ def _info(opt):
         + "with values between 0 and 1."
     )
 
+def save_progress(agent, statistics, model_path="model_weights.pth", stats_path="training_statistics.json"):
+    agent.save_model(model_path)
+    
+    with open(stats_path, "w") as f:
+        json.dump(statistics, f, indent=4)
+
+    print(f"Progress saved: model -> {model_path}, statistics -> {stats_path}")
 
 def main(opt):
     _info(opt)
@@ -196,12 +203,9 @@ def main(opt):
             eval_reward = eval(agent, eval_env, step_cnt, opt)
             statistics["eval_rewards"].append(eval_reward)
 
-            agent.save_model("model_weights.pth")
+            save_progress(agent, statistics)
         
-        agent.save_model("model_weights.pth")
-    
-    with open("training_statistics.json", "w") as f:
-        json.dump(statistics, f, indent=4)
+        save_progress(agent, statistics)
 
 
 def get_options():
