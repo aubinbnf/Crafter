@@ -83,7 +83,7 @@ class DQNAgent:
 
         q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
         next_actions = self.model(next_states).argmax(1).unsqueeze(1)
-        next_q_values = self.model(next_states).max(1)[0]
+        next_q_values = self.target_model(next_states).gather(1, next_actions).squeeze(1)
         
         # targets for Q-values
         targets = rewards + self.gamma * next_q_values * (1 - dones)
