@@ -35,7 +35,7 @@ class DQNAgent:
         self.gamma = gamma
         self.epsilon = 1.0
         self.epsilon_min = 0.1
-        self.epsilon_decay = 0.995
+        self.epsilon_decay = 0.998
         self.model = DQN(action_num).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.memory = deque(maxlen=10000)
@@ -84,7 +84,7 @@ class DQNAgent:
         targets = rewards + self.gamma * next_q_values * (1 - dones)
         
         # loss
-        loss = nn.functional.mse_loss(q_values, targets)
+        loss = nn.SmoothL1Loss()(q_values, targets)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -98,6 +98,8 @@ class DQNAgent:
             return avg_loss
         return None
 
+    def save_model(self, path="dqn_model.pth"):
+        torch.save(self.model.state_dict(), path)
     
 
 def _save_stats(episodic_returns, crt_step, path):
@@ -193,6 +195,10 @@ def main(opt):
         if step_cnt % opt.eval_interval == 0:
             eval_reward = eval(agent, eval_env, step_cnt, opt)
             statistics["eval_rewards"].append(eval_reward)
+
+            agent.save_model("model_weights.pth")
+        
+        agent.save_model("model_weights.pth")
     
     with open("training_statistics.json", "w") as f:
         json.dump(statistics, f, indent=4)
