@@ -202,11 +202,9 @@ def main(opt):
         if step_cnt % opt.eval_interval == 0:
             eval_reward = eval(agent, eval_env, step_cnt, opt)
             statistics["eval_rewards"].append(eval_reward)
-
-        if step_cnt % 5000 == 0:
             save_progress(agent, statistics)
         
-        save_progress(agent, statistics)
+    save_progress(agent, statistics)
 
 
 def get_options():
