@@ -37,6 +37,7 @@ class DQNAgent:
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.9999
         self.model = DQN(action_num).to(device)
+        self.target_model = DQN(action_num).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.memory = deque(maxlen=10000)
         self.batch_size = 32
