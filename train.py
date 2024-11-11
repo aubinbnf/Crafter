@@ -42,6 +42,9 @@ class DQNAgent:
         self.batch_size = 32
         self.episode_loss = []
 
+        self.target_model.load_state_dict(self.model.state_dict())
+        self.target_model.eval()
+
     def store_experience(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
 
@@ -78,6 +81,7 @@ class DQNAgent:
         dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
 
         q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+        next_actions = self.model(next_states).argmax(1).unsqueeze(1)
         next_q_values = self.model(next_states).max(1)[0]
         
         # targets for Q-values
@@ -100,6 +104,9 @@ class DQNAgent:
 
     def save_model(self, path="dqn_model.pth"):
         torch.save(self.model.state_dict(), path)
+
+    def update_target_model(self):
+        self.target_model.load_state_dict(self.model.state_dict())
     
 
 def _save_stats(episodic_returns, crt_step, path):
@@ -162,6 +169,7 @@ def main(opt):
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     agent = DQNAgent(env.action_space.n, opt.device)
+    target_update_interval = 1000
 
     ep_cnt, step_cnt, done = 0, 0, True
     episode_rewards, episode_steps = 0, 0
@@ -195,6 +203,9 @@ def main(opt):
 
         agent.store_experience(obs, action, reward, next_obs, done)
         agent.train()
+
+        if step_cnt % target_update_interval == 0:
+            agent.update_target_model()
 
         obs = next_obs
         step_cnt += 1
