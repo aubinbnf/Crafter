@@ -29,13 +29,13 @@ class DQN(nn.Module):
         return self.fc2(x)
 
 class DQNAgent:
-    def __init__(self, action_num, device, gamma=0.99, lr=0.00025):
+    def __init__(self, action_num, device, gamma=0.99, lr=0.0001):
         self.action_num = action_num
         self.device = device
         self.gamma = gamma
         self.epsilon = 1.0
-        self.epsilon_min = 0.1
-        self.epsilon_decay = 0.998
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.999
         self.model = DQN(action_num).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.memory = deque(maxlen=10000)
