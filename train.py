@@ -35,11 +35,11 @@ class DQNAgent:
         self.gamma = gamma
         self.epsilon = 1.0
         self.epsilon_min = 0.01
-        self.epsilon_decay = 0.9999
+        self.epsilon_decay = 0.99999
         self.model = DQN(action_num).to(device)
         self.target_model = DQN(action_num).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        self.memory = deque(maxlen=10000)
+        self.memory = deque(maxlen=20000)
         self.batch_size = 32
         self.episode_loss = []
 
@@ -170,7 +170,7 @@ def main(opt):
     env = Env("train", opt)
     eval_env = Env("eval", opt)
     agent = DQNAgent(env.action_space.n, opt.device)
-    target_update_interval = 1000
+    target_update_interval = 5000
 
     ep_cnt, step_cnt, done = 0, 0, True
     episode_rewards, episode_steps = 0, 0
